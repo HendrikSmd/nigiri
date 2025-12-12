@@ -22,9 +22,9 @@
 #include "nigiri/rt/frun.h"
 #include "nigiri/types.h"
 
-namespace nigiri::loader {
+#include <queue>
 
-using component_idx_t = cista::strong<std::uint32_t, struct component_idx_>;
+namespace nigiri::loader {
 
 // station_idx -> [footpath, ...]
 using footgraph = vector<vector<footpath>>;
@@ -229,7 +229,6 @@ void connect_components(timetable& tt,
           components.emplace_back(std::move(c));
         }
       });
-
   // =====================
   // Shortest Path Search
   // ---------------------
@@ -430,6 +429,70 @@ void build_footpaths(timetable& tt, finalize_options const opt) {
   connect_components(tt, opt.max_footpath_length_, opt.adjust_footpaths_);
   sort_footpaths(tt);
   write_footpaths(tt);
+}
+
+void write_final_components(timetable& tt) {
+  auto const timer = scoped_timer{"writing footpath components"};
+
+  auto const are_footpaths_reflexive = [](const timetable& tt_in) {
+    const profile_idx_t prof_idx = kDefaultProfile;
+    for (location_idx_t loc = location_idx_t{0U}; loc != tt_in.n_locations(); ++loc) {
+      for (const auto& fp : tt_in.locations_.footpaths_out_[prof_idx][loc]) {
+        const auto target_loc = fp.target();
+
+        bool found = false;
+        for (const auto& tfp : tt_in.locations_.footpaths_out_[prof_idx][target_loc]) {
+          if (tfp.target() == loc) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  utl::verify(are_footpaths_reflexive(tt), "Footpaths are not reflexive.");
+
+  tt.location_component_.resize(tt.n_locations(), component_idx_t::invalid());
+  std::vector locs(tt.n_locations(), location_idx_t::invalid());
+  std::generate(locs.begin(), locs.end(), [] {
+    static size_t idx = 0;
+    return location_idx_t{idx++};
+  });
+  std::queue q(std::deque(
+        std::make_move_iterator(locs.begin()),
+        std::make_move_iterator(locs.end()))
+  );
+
+  component_idx_t next_cmpnt_idx{0};
+  while (!q.empty()) {
+    const auto& l = q.front();
+    q.pop();
+
+    if (tt.location_component_[l] != component_idx_t::invalid()) {
+      continue;
+    }
+    std::vector<location_idx_t> component_locations;
+    std::queue bfs_q(std::deque(1, l));
+    while (!bfs_q.empty()) {
+      const auto ex_l = bfs_q.front();
+      bfs_q.pop();
+      tt.location_component_[ex_l] = next_cmpnt_idx;
+      component_locations.emplace_back(ex_l);
+
+      for (const auto& fp_out : tt.locations_.footpaths_out_[kDefaultProfile][ex_l]) {
+        if (tt.location_component_[fp_out.target()] == component_idx_t::invalid()) {
+          bfs_q.push(fp_out.target());
+        }
+      }
+    }
+    tt.component_locations_.emplace_back(component_locations);
+    ++next_cmpnt_idx;
+  }
 }
 
 }  // namespace nigiri::loader

@@ -105,6 +105,10 @@ struct timetable {
     rtree<location_idx_t> rtree_;
   } locations_;
 
+  // Location components
+  vector_map<location_idx_t, component_idx_t> location_component_;
+  vecvec<component_idx_t, location_idx_t> component_locations_;
+
   struct transport {
     bitfield_idx_t bitfield_idx_;
     route_idx_t route_idx_;
