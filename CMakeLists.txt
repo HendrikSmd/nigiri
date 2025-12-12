@@ -12,6 +12,8 @@ endif ()
 include(cmake/buildcache.cmake)
 include(cmake/pkg.cmake)
 
+find_package(TBB REQUIRED COMPONENTS tbb)
+
 
 # --- GTFS-RT PROTOBUF ---
 add_custom_command(
@@ -115,7 +117,7 @@ target_compile_definitions(nigiri PUBLIC PUGIXML_COMPACT=1)
 # --- IMPORTER ---
 file(GLOB_RECURSE nigiri-import-files exe/import.cc)
 add_executable(nigiri-import ${nigiri-import-files})
-target_link_libraries(nigiri-import PRIVATE nigiri boost-program_options ianatzdb-res)
+target_link_libraries(nigiri-import PRIVATE nigiri boost-program_options ianatzdb-res tbb)
 target_compile_features(nigiri-import PUBLIC cxx_std_23)
 
 # --- BENCHMARK ---
