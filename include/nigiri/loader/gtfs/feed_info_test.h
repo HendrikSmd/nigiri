@@ -1,6 +1,7 @@
 #pragma once
 
 #include "date/date.h"
+#include <optional>
 
 namespace nigiri::loader::gtfs {
 
