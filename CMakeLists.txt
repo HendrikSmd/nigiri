@@ -132,6 +132,12 @@ add_executable(nigiri-qa ${nigiri-qa-files})
 target_link_libraries(nigiri-qa PRIVATE nigiri boost-program_options)
 target_compile_features(nigiri-qa PUBLIC cxx_std_23)
 
+# --- PARA ---
+file(GLOB_RECURSE nigiri-para-files exe/para.cc)
+add_executable(nigiri-para ${nigiri-para-files})
+target_link_libraries(nigiri-para PRIVATE nigiri boost-program_options)
+target_compile_features(nigiri-para PUBLIC cxx_std_23)
+
 # --- TEST ---
 add_library(nigiri-generated INTERFACE)
 target_include_directories(nigiri-generated INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/generated)

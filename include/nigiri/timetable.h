@@ -154,6 +154,54 @@ struct timetable {
     return std::span<delta const>{&route_stop_times_[idx], n_transports};
   }
 
+  size_t n_events_at_location(location_idx_t const loc) const {
+    size_t res = 0;
+    // Get all routes in which loc is a stop
+    auto const& loc_routes = location_routes_[loc];
+    for (auto const& loc_route : loc_routes) {
+      auto const& loc_seq = route_location_seq_[loc_route];
+      // Find the position of loc in the route loc_route
+      const auto stop_it = std::ranges::find_if(
+        loc_seq,
+        [=](stop::value_type const& s) {
+          return stop{s}.location_idx() == loc;
+        });
+      assert(stop_it != loc_seq.end());
+
+      // If loc is first/last stop we only have departure/arrival
+      // event per trip. If not we have both (arrival and departure).
+      std::uint8_t event_multiplier =
+        (stop_it == loc_seq.begin() ||
+        stop_it == loc_seq.end()-1) ? 1U : 2U;
+
+      auto const& route_transport_range = route_transport_ranges_[loc_route];
+      // Find all traffic day transports of the current route
+      for (auto const t_idx : route_transport_range) {
+        auto const td_bitfield_idx = transport_traffic_days_[t_idx];
+        auto const& td_bitfield = bitfields_[td_bitfield_idx];
+        // Counting the set bits correspond to the actual number of trips of this transport
+        // in the time captured by the timetable
+        res += td_bitfield.count() * event_multiplier;
+      }
+    }
+    return res;
+  }
+
+  size_t n_events_for_route(route_idx_t const r) const {
+    size_t res = 0;
+    auto const& loc_seq = route_location_seq_[r];
+    size_t n_events_per_trip = (loc_seq.size() - 2) * 2 + 2;
+    auto const& route_transport_range = route_transport_ranges_[r];
+    for (auto const t_idx : route_transport_range) {
+      auto const td_bitfield_idx = transport_traffic_days_[t_idx];
+      auto const& td_bitfield = bitfields_[td_bitfield_idx];
+      // Counting the set bits correspond to the actual number of trips of this transport
+      // in the time captured by the timetable
+      res += td_bitfield.count() * n_events_per_trip;
+    }
+    return res;
+  }
+
   delta event_mam(route_idx_t const r,
                   transport_idx_t t,
                   stop_idx_t const stop_idx,
