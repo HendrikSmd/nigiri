@@ -121,7 +121,7 @@ struct route_hyper_graph {
         events_in_component += tt.n_events_at_location(loc);
       }
       // The base 2 logarithm of an unsigned is essentially its highest set bit position
-      hedge_weights[component_idx.v_] = std::max(std::bit_width<size_t>(events_in_component / locs_in_cmpnt.size()), 1) - 1;
+      hedge_weights[component_idx.v_] = events_in_component / locs_in_cmpnt.size();
     }
 
     // ==========================
@@ -130,9 +130,19 @@ struct route_hyper_graph {
     // --------------------------
     sort_hedges_lexicographically();
     merge_duplicates();
+    // normalizing must happen after merging duplicate hedges
+    // to avoid wrong weight scaling (log(x) + log(y) = log(x * y))
+    normalize_hedge_weights();
     if (!hyper_edges.empty() && hyper_edges[0].empty()) {
       hyper_edges.erase(hyper_edges.begin());
       hedge_weights.erase(hedge_weights.begin());
+    }
+  }
+
+  void normalize_hedge_weights() {
+    for (auto& hedge_weight : hedge_weights) {
+      // The base 2 logarithm of an unsigned is essentially its highest set bit position
+      hedge_weight = std::max(std::bit_width<size_t>(hedge_weight), 1) - 1;
     }
   }
 
