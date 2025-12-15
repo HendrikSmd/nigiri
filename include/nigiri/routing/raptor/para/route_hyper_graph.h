@@ -146,7 +146,9 @@ struct route_hyper_graph {
     }
   }
 
-  void export_as_hmetis(const std::filesystem::path& out) {
+  void export_as_hmetis(const std::filesystem::path& out,
+                        bool export_node_weights,
+                        bool export_hedge_weights) {
     std::ofstream out_file(out, std::ofstream::out);
 
     auto const timer = scoped_timer{"write hyper graph to output file"};
@@ -154,29 +156,44 @@ struct route_hyper_graph {
     // write hmetis header [#edges #nodes 11]
     // the 11 signals both: edge and node weights
     // --------------------------
-    out_file << hyper_edges.size() << " " << n_nodes << " 11" << std::endl;
+    out_file << hyper_edges.size() << " " << n_nodes;
+    if (export_node_weights && export_hedge_weights) {
+      out_file << " 11";
+    } else if (export_node_weights) {
+      out_file << " 10";
+    } else if (export_hedge_weights) {
+      out_file << " 1";
+    }
+    out_file << std::endl;
 
     // ==========================
     // write one line per hyper edge
     //   [#weight {node_idx}*]
     // --------------------------
-    out_file << "% Hyper Edges:" << std::endl;
+    //out_file << "% Hyper Edges:" << std::endl;
     for (size_t hedge_idx = 0U; hedge_idx < hyper_edges.size(); ++hedge_idx) {
-      out_file << hedge_weights[hedge_idx];
-      const auto& nodes = hyper_edges[hedge_idx];
+      if (export_hedge_weights) {
+        out_file << hedge_weights[hedge_idx];
+      }
+      auto& nodes = hyper_edges[hedge_idx];
+      std::stringstream out_line;
       for (const auto& node : nodes) {
         // hmetis starts node indexing at 1
-        out_file << " " << node + 1;
+        out_line << node + 1 << " ";
       }
-      out_file << std::endl;
+      out_line.seekp(-1, std::ios::cur);
+      out_line << std::endl;
+      out_file << out_line.str();
     }
 
     // ==========================
     // write one line for node weight
     // --------------------------
-    out_file << "% Node weights:" << std::endl;
-    for (size_t node_idx = 0U; node_idx < n_nodes; ++node_idx) {
-      out_file << node_weights[node_idx] << std::endl;
+    //out_file << "% Node weights:" << std::endl;
+    if (export_node_weights) {
+      for (size_t node_idx = 0U; node_idx < n_nodes; ++node_idx) {
+        out_file << node_weights[node_idx] << std::endl;
+      }
     }
     out_file.close();
   }

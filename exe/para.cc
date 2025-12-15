@@ -82,11 +82,15 @@ int main(int argc, char** argv) {
   if(command == "export-hgraph") {
     auto in = fs::path{};
     auto out = fs::path{"hyper-graph.out.txt"};
+    auto node_weights = true;
+    auto hedge_weights = true;
 
     bpo::options_description export_hgraph_desc("export-hgraph options");
     export_hgraph_desc.add_options()
         ("in", bpo::value(&in), "path to the input timetable used to construct the hyper graph")
-        ("out", bpo::value(&out)->default_value(out), "path to the output file");
+        ("out", bpo::value(&out)->default_value(out), "path to the output file")
+        ("node_weights", bpo::value(&node_weights)->default_value(node_weights), "compute node weights")
+        ("hedge_weights", bpo::value(&hedge_weights)->default_value(hedge_weights), "compute hedge weights");
 
     if (vm.contains("help")) {
       std::cout << export_hgraph_desc << "\n\n";
@@ -104,7 +108,7 @@ int main(int argc, char** argv) {
 
     routing::route_hyper_graph hyper_graph;
     hyper_graph.from(tt);
-    hyper_graph.export_as_hmetis(out);
+    hyper_graph.export_as_hmetis(out, node_weights, hedge_weights);
   } else if (command == "inject-partition") {
     std::cout << "nyi" << std::endl;
   } else {
