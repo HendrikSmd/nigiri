@@ -155,7 +155,8 @@ struct route_hyper_graph {
       out_file << hedge_weights[hedge_idx];
       const auto& nodes = hyper_edges[hedge_idx];
       for (const auto& node : nodes) {
-        out_file << " " << node;
+        // hmetis starts node indexing at 1
+        out_file << " " << node + 1;
       }
       out_file << std::endl;
     }
