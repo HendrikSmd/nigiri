@@ -5,9 +5,11 @@
 #include "boost/program_options.hpp"
 
 #include "nigiri/loader/load.h"
-#include "date/date.h"
-#include "nigiri/timetable.h"
 #include "nigiri/routing/raptor/para/route_hyper_graph.h"
+#include "nigiri/routing/raptor/para/route_partition.h"
+#include "nigiri/routing/raptor/para/geojson.h"
+#include "nigiri/timetable.h"
+#include "date/date.h"
 
 namespace fs = std::filesystem;
 namespace bpo = boost::program_options;
@@ -32,10 +34,11 @@ constexpr size_t get_max_sub_command_length(const std::array<sub_command, N>& ar
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 2> sub_commands = {
+  static constexpr std::array<sub_command, 3> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
-      {"inject-partition", "injects the partitioned hypergraph into a timetable"}
+      {"import-partition", "imports a partition file"},
+      {"export-partition", "exports a partition in a supported format"}
     }
   };
 
@@ -109,9 +112,103 @@ int main(int argc, char** argv) {
     routing::route_hyper_graph hyper_graph;
     hyper_graph.from(tt);
     hyper_graph.export_as_hmetis(out, node_weights, hedge_weights);
-  } else if (command == "inject-partition") {
-    std::cout << "nyi" << std::endl;
+  } else if (command == "import-partition") {
+    auto in_part = fs::path{};
+    auto in_tt = fs::path{};
+    auto out = fs::path{"part.bin"};
+
+    bpo::options_description import_part_desc("export-hgraph options");
+    import_part_desc.add_options()
+        ("in_part", bpo::value(&in_part), "path to the partition file in hmetis format")
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("out", bpo::value(&out)->default_value(out), "path to the output file");
+
+    if (vm.contains("help")) {
+      std::cout << import_part_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(import_part_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    routing::route_partition partition;
+    partition.from_hmetis_result(in_part, tt);
+    fmt::print("Finished reading in route partition with {} cells\n", partition.n_cells_);
+
+    const auto count_cells = [](routing::route_partition const& partition, std::vector<size_t>& counts) {
+      counts.resize(partition.n_cells_, 0U);
+      for (const auto& cell_idx : partition.route_to_cell_idx_) {
+        counts[cell_idx.v_]++;
+      }
+    };
+
+    std::vector<size_t> counts;
+    count_cells(partition, counts);
+    std::cout << "Count per cell: " << std::endl;
+    for (size_t cell_idx = 0U; cell_idx < counts.size(); ++cell_idx) {
+      std::cout << "  Cell [" << std::right << std::setw(10) << cell_idx << "]: #" << counts[cell_idx] << std::endl;
+    }
+
+    partition.write(out);
+  } else if (command == "export-partition") {
+    auto in_part = fs::path{};
+    auto in_tt = fs::path{};
+    auto out = fs::path{};
+    auto format = size_t{0};
+
+    bpo::options_description export_part_desc("export-hgraph options");
+    export_part_desc.add_options()
+        ("in_part", bpo::value(&in_part), "path to the route partition file (nigiri format)")
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("format", bpo::value(&format)->default_value(format), "format: (0)json, ...")
+        ("out", bpo::value(&out), "path to the output file");
+
+
+    if (vm.contains("help")) {
+      std::cout << export_part_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(export_part_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto route_part = *routing::route_partition::read(in_part);
+
+    static constexpr std::array<std::string, 1> format_to_suffix = {
+      ".json"
+    };
+
+    auto out_str = out.string();
+    const auto dot_pos = out_str.find_last_of(".");
+    if (dot_pos != std::string::npos) {
+      const auto suffix = out_str.substr(dot_pos, std::string::npos);
+      if (suffix != format_to_suffix[format]) {
+        out_str += format_to_suffix[format];
+      }
+    }
+
+    std::ofstream out_file(out_str, std::ios::out);
+    switch (format) {
+      case 0:
+        out_file << routing::para::to_featurecollection(tt, route_part);
+        break;
+      default:
+        std::cout << "invalid format!" << std::endl;
+    }
   } else {
+
     std::cout << "Unrecognized command: " << command << std::endl;
   }
 }
