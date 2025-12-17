@@ -139,10 +139,11 @@ int main(int argc, char** argv) {
 
     routing::route_partition partition;
     partition.from_hmetis_result(in_part, tt);
-    fmt::print("Finished reading in route partition with {} cells\n", partition.n_cells_);
+    fmt::print("Finished reading in route partition with {} levels\n", partition.n_levels_);
 
     const auto count_cells = [](routing::route_partition const& partition, std::vector<size_t>& counts) {
-      counts.resize(partition.n_cells_, 0U);
+      auto const n_cells = 1U << partition.n_levels_;
+      counts.resize(n_cells, 0U);
       for (const auto& cell_idx : partition.route_to_cell_idx_) {
         counts[cell_idx.v_]++;
       }

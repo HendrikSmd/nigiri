@@ -17,7 +17,7 @@ struct route_partition {
 
 
   vector_map<route_idx_t, cell_idx_t> route_to_cell_idx_;
-  cista::base_t<cell_idx_t> n_cells_{};
+  cista::base_t<cell_idx_t> n_levels_{};
 };
 
 }
