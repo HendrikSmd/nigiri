@@ -1,5 +1,7 @@
 #include "nigiri/routing/start_times.h"
 
+#include "nigiri/loader/gtfs/route.h"
+
 #include "nigiri/for_each_meta.h"
 #include "nigiri/rt/rt_timetable.h"
 #include "nigiri/special_stations.h"
@@ -129,7 +131,8 @@ void add_starts_in_interval(direction const search_dir,
                             duration_t const max_start_offset,
                             profile_idx_t const p,
                             std::vector<start>& starts,
-                            bool const add_ontrip) {
+                            bool const add_ontrip,
+                            bitvec const& route_mask) {
   trace_start(
       "    add_starts_in_interval(interval={}, stop={}): {} "
       "routes\n",
@@ -138,7 +141,9 @@ void add_starts_in_interval(direction const search_dir,
 
   // Iterate routes visiting the location.
   for (auto const& r : tt.location_routes_.at(l)) {
-
+    if (!route_mask[to_idx(r)]) {
+      continue;
+    }
     // Iterate the location sequence, searching the given location.
     auto const location_seq = tt.route_location_seq_.at(r);
     trace_start("  location_seq: route={}\n", r);
@@ -251,7 +256,9 @@ void get_starts(
     std::vector<start>& starts,
     bool const add_ontrip,
     profile_idx_t const prf_idx,
-    transfer_time_settings const& tts) {
+    transfer_time_settings const& tts,
+    bitvec const& route_mask) {
+  assert(route_mask.size() == tt.n_routes());
   auto shortest_start = hash_map<location_idx_t, duration_t>{};
   auto const update = [&](location_idx_t const l, duration_t const d) {
     auto& val = utl::get_or_create(shortest_start, l, [d]() { return d; });
@@ -280,7 +287,7 @@ void get_starts(
                                  add_starts_in_interval(
                                      search_dir, tt, rtt, interval, l, o,
                                      max_start_offset, prf_idx, starts,
-                                     add_ontrip);
+                                     add_ontrip, route_mask);
                                },
                                [&](unixtime_t const t) {
                                  starts.emplace_back(
@@ -298,7 +305,7 @@ void get_starts(
               add_starts_in_interval(search_dir, tt, rtt, interval, stop,
                                      location_offset_t{std::span{offsets}},
                                      max_start_offset, prf_idx, starts,
-                                     add_ontrip);
+                                     add_ontrip, route_mask);
             },
             [&](unixtime_t const t) {
               auto const d = get_duration(search_dir, t, offsets, false);
