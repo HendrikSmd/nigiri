@@ -142,13 +142,13 @@ struct route_hyper_graph {
   void normalize_hedge_weights() {
     for (auto& hedge_weight : hedge_weights) {
       // The base 2 logarithm of an unsigned is essentially its highest set bit position
-      hedge_weight = std::max(std::bit_width<size_t>(hedge_weight), 1) - 1;
+      hedge_weight = std::max(static_cast<size_t>(std::bit_width<size_t>(hedge_weight)), static_cast<size_t>(1)) - 1;
     }
   }
 
   void export_as_hmetis(const std::filesystem::path& out,
                         bool export_node_weights,
-                        bool export_hedge_weights) {
+                        bool export_hedge_weights) const {
     std::ofstream out_file(out, std::ofstream::out);
 
     auto const timer = scoped_timer{"write hyper graph to output file"};
