@@ -9,6 +9,10 @@
 
 namespace nigiri::routing {
 
+cell_idx_t route_partition::get_parent_idx(cell_idx_t cell_idx) {
+  return cell_idx >> 1U;
+}
+
 void route_partition::write(std::filesystem::path const& path) const {
   return cista::write(path, *this);
 }
@@ -47,6 +51,15 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
   }
 
   this->n_levels_ = static_cast<cista::base_t<cell_idx_t>>(std::bit_width(n_cells_) - 1);
+}
+
+size_t route_partition::get_num_of_cells_on_level(uint8_t const level) const {
+  assert(n_levels_ >= level);
+  return 1U << static_cast<size_t>(n_levels_ - level);
+}
+
+cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint8_t level) const {
+  return route_to_cell_idx_.at(r_idx) >> level;
 }
 
 

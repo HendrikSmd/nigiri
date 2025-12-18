@@ -5,10 +5,15 @@
 #include "boost/program_options.hpp"
 
 #include "nigiri/loader/load.h"
+#include "nigiri/routing/pareto_set.h"
+#include "nigiri/routing/raptor/para/export_partition.h"
 #include "nigiri/routing/raptor/para/route_hyper_graph.h"
 #include "nigiri/routing/raptor/para/route_partition.h"
-#include "nigiri/routing/raptor/para/geojson.h"
+#include "nigiri/routing/raptor/raptor.h"
+#include "nigiri/routing/raptor/raptor_state.h"
+#include "nigiri/routing/search.h"
 #include "nigiri/timetable.h"
+
 #include "date/date.h"
 
 namespace fs = std::filesystem;
@@ -167,7 +172,7 @@ int main(int argc, char** argv) {
     export_part_desc.add_options()
         ("in_part", bpo::value(&in_part), "path to the route partition file (nigiri format)")
         ("in_tt", bpo::value(&in_tt), "path to the timetable")
-        ("format", bpo::value(&format)->default_value(format), "format: (0)json, ...")
+        ("format", bpo::value(&format)->default_value(format), "format: (0)json, (1)graphviz, ...")
         ("out", bpo::value(&out), "path to the output file");
 
 
@@ -187,8 +192,9 @@ int main(int argc, char** argv) {
 
     auto route_part = *routing::route_partition::read(in_part);
 
-    static constexpr std::array<std::string, 1> format_to_suffix = {
-      ".json"
+    static constexpr std::array<std::string_view, 2> format_to_suffix = {
+      ".json",
+      ".dot"
     };
 
     auto out_str = out.string();
@@ -205,11 +211,38 @@ int main(int argc, char** argv) {
       case 0:
         out_file << routing::para::to_featurecollection(tt, route_part);
         break;
+      case 1:
+        out_file << routing::para::to_graphviz(tt, route_part);
+        break;
       default:
         std::cout << "invalid format!" << std::endl;
     }
-  } else {
+  } else if (command == "customize") {
+    auto tt = *timetable::read("../cmake-build-debug-clang-17/tt-swiss.bin");
+    tt.resolve();
+    std::cout << tt.internal_interval() << std::endl;
+    location_idx_t dest{29773};
+    location_idx_t src{17093};
 
+    auto q = routing::query{
+      .start_time_ = interval{unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours},
+      .use_start_footpaths_ = true,
+      .start_ = {{src, 0_minutes, 0U}},
+      .destination_ = {{dest, 0_minutes, 0U}},
+      .prf_idx_ = 0,
+    };
+    const auto res = raptor_search(tt, q);
+    std::cout << res.size() << std::endl;
+    for (const auto& j : res) {
+      std::cout << j.departure_time() << ", " << j.arrival_time() << "@" << j.dest_ << std::endl;
+    }
+
+    //for (auto l = location_idx_t{0}; l < tt.n_locations(); ++l) {
+    //  const auto& name = tt.locations_.names_[l];
+   //   if (name.view().contains("Zürich")) {
+     //   std::cout << l << ": " << name.view() << std::endl;
+     // }
+    } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }
 }
