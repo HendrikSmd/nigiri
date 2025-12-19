@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cassert>
-#include <utility>
 
 #include "nigiri/common/delta_t.h"
 #include "nigiri/common/linear_lower_bound.h"
@@ -69,8 +68,7 @@ enum class search_mode { kOneToOne, kOneToAll };
 template <direction SearchDir,
           bool Rt,
           via_offset_t Vias,
-          search_mode SearchMode,
-          bool use_route_mask = false>
+          search_mode SearchMode>
 struct raptor {
   using algo_state_t = raptor_state;
   using algo_stats_t = raptor_stats;
@@ -113,8 +111,7 @@ struct raptor {
       bool const require_bike_transport,
       bool const require_car_transport,
       bool const is_wheelchair,
-      transfer_time_settings const& tts,
-      bitvec route_mask)
+      transfer_time_settings const& tts)
       : tt_{tt},
         rtt_{rtt},
         n_days_{tt_.internal_interval_days().size().count()},
@@ -136,12 +133,8 @@ struct raptor {
         require_bike_transport_{require_bike_transport},
         require_car_transport_{require_car_transport},
         is_wheelchair_{is_wheelchair},
-        transfer_time_settings_{tts},
-        route_mask_{std::move(route_mask)} {
+        transfer_time_settings_{tts} {
     assert(Vias == via_stops_.size());
-    if constexpr (use_route_mask) {
-      assert(route_mask_.size() == n_routes_);
-    }
     reset_arrivals();
     if (!dist_to_end_.empty()) {
       // only used for intermodal queries (dist_to_dest != empty)
@@ -156,39 +149,6 @@ struct raptor {
       }
     }
   }
-
-  raptor(
-    timetable const& tt,
-    rt_timetable const* rtt,
-    raptor_state& state,
-    bitvec& is_dest,
-    std::array<bitvec, kMaxVias>& is_via,
-    std::vector<std::uint16_t>& dist_to_dest,
-    hash_map<location_idx_t, std::vector<td_offset>> const& td_dist_to_dest,
-    std::vector<std::uint16_t>& lb,
-    std::vector<via_stop> const& via_stops,
-    day_idx_t const base,
-    clasz_mask_t const allowed_claszes,
-    bool const require_bike_transport,
-    bool const require_car_transport,
-    bool const is_wheelchair,
-    transfer_time_settings const& tts)
-    : raptor(tt,
-             rtt,
-             state,
-             is_dest,
-             is_via,
-             dist_to_dest,
-             td_dist_to_dest,
-             lb,
-             via_stops,
-             base,
-             allowed_claszes,
-             require_bike_transport,
-             require_car_transport,
-             is_wheelchair,
-             tts,
-             bitvec{}) {}
 
   algo_stats_t get_stats() const { return stats_; }
 
@@ -250,11 +210,6 @@ struct raptor {
       auto any_marked = false;
       state_.station_mark_.for_each_set_bit([&](std::uint64_t const i) {
         for (auto const& r : tt_.location_routes_[location_idx_t{i}]) {
-          if constexpr (use_route_mask) {
-            if (!route_mask_[to_idx(r)]) {
-              continue;
-            }
-          }
           any_marked = true;
           state_.route_mark_.set(to_idx(r), true);
         }
@@ -374,11 +329,6 @@ private:
     auto any_marked = false;
     state_.route_mark_.for_each_set_bit([&](auto const r_idx) {
       auto const r = route_idx_t{r_idx};
-      if constexpr (use_route_mask) {
-        if (!route_mask_[to_idx(r)]) {
-          return;
-        }
-      }
 
       if constexpr (WithClaszFilter) {
         if (!is_allowed(allowed_claszes_, tt_.route_clasz_[r])) {
@@ -1314,7 +1264,6 @@ private:
   bool require_car_transport_;
   bool is_wheelchair_;
   transfer_time_settings transfer_time_settings_;
-  bitvec route_mask_;
 };
 
 }  // namespace nigiri::routing
