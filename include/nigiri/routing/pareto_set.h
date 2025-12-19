@@ -3,6 +3,7 @@
 #include <cinttypes>
 #include <tuple>
 #include <vector>
+#include "utl/helpers/algorithm.h"
 
 namespace nigiri {
 

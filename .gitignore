@@ -3,4 +3,5 @@
 /.idea
 /.clang-tidy
 /.vscode
+/timetables
 shape*.bin
