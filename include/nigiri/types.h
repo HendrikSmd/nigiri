@@ -191,6 +191,7 @@ using booking_rule_idx_t =
     cista::strong<std::uint32_t, struct _booking_rule_idx>;
 using alt_name_idx_t = cista::strong<std::uint32_t, struct _alt_name_idx>;
 using language_idx_t = cista::strong<std::uint16_t, struct _language_idx>;
+using route_rank_t = cista::strong<std::uint32_t, struct _route_rank_t>;
 
 using flex_stop_t = variant<flex_area_idx_t, location_group_idx_t>;
 
