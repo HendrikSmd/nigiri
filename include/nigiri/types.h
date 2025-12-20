@@ -191,6 +191,7 @@ using location_group_idx_t =
 using booking_rule_idx_t =
     cista::strong<std::uint32_t, struct _booking_rule_idx>;
 using language_idx_t = cista::strong<std::uint16_t, struct _language_idx>;
+using route_rank_t = cista::strong<std::uint32_t, struct _route_rank_t>;
 
 using lang_t = std::optional<std::vector<std::string>>;
 

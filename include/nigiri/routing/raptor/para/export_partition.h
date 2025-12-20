@@ -29,12 +29,17 @@ inline bool has_distinct(const std::vector<cell_idx_t>& cells) {
 inline boost::json::object location_to_feature(timetable const& tt,
                                                route_partition const& rtp,
                                                location_idx_t const l_idx) {
-  std::vector<cell_idx_t> cell_idxs;
-  const auto& routes_of_loc = tt.location_routes_[l_idx];
-  std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
-    return rtp.route_to_cell_idx_[r];
-  });
+  auto cmpnt_idx = tt.location_component_[l_idx];
+  auto const& [cell_idx, lvl] = rtp.cmpnt_to_cell_idx_[cmpnt_idx];
 
+  boost::json::array cell_idx_on_levels(rtp.n_levels_ + 1, boost::json::value{-1});
+  auto current_lvl = lvl;
+  auto current_cell_idx = cell_idx;
+  while (current_lvl <= rtp.n_levels_) {
+    cell_idx_on_levels[current_lvl] = boost::json::value{to_idx(current_cell_idx)};
+    current_cell_idx = route_partition::get_parent_idx(current_cell_idx);
+    current_lvl++;
+  }
 
   return boost::json::object{
     {"type", "Feature"},
@@ -46,10 +51,7 @@ inline boost::json::object location_to_feature(timetable const& tt,
     },
     {"properties",
       boost::json::object{
-        {"cell_idx", has_distinct(cell_idxs) ?
-          boost::json::value{-1} :
-          boost::json::value{cista::to_idx(cell_idxs.front())}
-        }
+        {"cell_idxs", cell_idx_on_levels}
       }
     }
   };
@@ -80,7 +82,7 @@ inline size_t estimate_chars(size_t const n) {
   return static_cast<size_t>(std::log10(n)) + 1;
 }
 
-inline void append_links(timetable const& tt, route_partition const& rtp, std::string& out) {
+inline void append_links(route_partition const& rtp, std::string& out) {
   size_t const n_of_cells = 1U << rtp.n_levels_;
   constexpr std::string_view link_template = "C{}_{} -> C{}_{};\n";
   for (size_t level = rtp.n_levels_; level > 0; --level) {
@@ -106,10 +108,10 @@ std::vector<size_t> count_routes_on_level(timetable const& tt,
 std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
   size_t n_of_cells = rtp.get_num_of_cells_on_level(0);
   std::string graph_repr("digraph BinaryTree {\nnode [shape=record];\nedge [arrowsize=0.8];\n");
-  append_links(tt, rtp, graph_repr);
+  append_links(rtp, graph_repr);
 
   std::string nodes_repr;
-  constexpr std::string_view node_template = "C{} [label=\"<f0> #routes: {} |<f1> #stops: {} |<f2> #cut stops: {} \"]\n";
+  constexpr std::string_view node_template = "C{} [label=\"<f0> #routes: {} |<f1> #cmpnts: {} |<f2> #cut cmpnts: {} \"]\n";
   size_t n_total_nodes = 2 * n_of_cells - 1;
   size_t chars_for_nodes_ub = n_total_nodes * (node_template.size()
                                              + estimate_chars(n_of_cells)
@@ -118,38 +120,37 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
                                              + 2 * estimate_chars(tt.n_locations()));
   nodes_repr.reserve(chars_for_nodes_ub);
 
-  std::vector<std::vector<cell_idx_t>> location_cell_idxs;
-  size_t empty_cells = 0U;
-  for (auto l = location_idx_t{0}; l < tt.n_locations(); ++l) {
+  auto n_components = tt.component_locations_.size();
+  std::vector<std::vector<cell_idx_t>> component_cell_idxs;
+  for (auto c = component_idx_t{0}; c < n_components; ++c) {
     std::vector<cell_idx_t> cell_idxs;
-    const auto& routes_of_loc = tt.location_routes_[l];
-    if (routes_of_loc.empty()) {
-      empty_cells++;
+    for (const auto& l : tt.component_locations_[c]) {
+      const auto& routes_of_loc = tt.location_routes_[l];
+
+      std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
+        return rtp.route_to_cell_idx_[r];
+      });
     }
-    std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
-      return rtp.route_to_cell_idx_[r];
-    });
     std::ranges::sort(cell_idxs);
     auto last = std::unique(cell_idxs.begin(), cell_idxs.end());
     cell_idxs.erase(last, cell_idxs.end());
-    location_cell_idxs.emplace_back(cell_idxs);
+    component_cell_idxs.emplace_back(cell_idxs);
   }
-  fmt::print("{} locations and {} empty", tt.n_locations(), empty_cells);
 
 
-  vector_map<cell_idx_t, size_t> internal_stop_cell_counts(n_of_cells, 0U);
-  vector_map<cell_idx_t, size_t> cut_stop_cell_counts(n_of_cells, 0U);
+  vector_map<cell_idx_t, size_t> internal_cmpnt_cell_counts(n_of_cells, 0U);
+  vector_map<cell_idx_t, size_t> cut_cmpnt_cell_counts(n_of_cells, 0U);
   for (size_t level = 0U; level <= rtp.n_levels_; ++level) {
 
     const auto n_routes_per_cell = count_routes_on_level(tt, rtp, level);
-    for (const auto& cell_idxs : location_cell_idxs) {
+    for (const auto& cell_idxs : component_cell_idxs) {
       if (cell_idxs.size() == 1) {
-        internal_stop_cell_counts[cell_idxs.front()]++;
+        internal_cmpnt_cell_counts[cell_idxs.front()]++;
         continue;
       }
 
       for (const auto& cell_idx : cell_idxs) {
-        cut_stop_cell_counts[cell_idx]++;
+        cut_cmpnt_cell_counts[cell_idx]++;
       }
     }
 
@@ -158,17 +159,17 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
       nodes_repr.append(fmt::format(node_template,
         ident,
         n_routes_per_cell[to_idx(cell_idx)],
-        internal_stop_cell_counts[cell_idx],
-        cut_stop_cell_counts[cell_idx])
+        internal_cmpnt_cell_counts[cell_idx],
+        cut_cmpnt_cell_counts[cell_idx])
       );
     }
 
     n_of_cells >>= 1U;
-    internal_stop_cell_counts.resize(n_of_cells);
-    std::ranges::fill(internal_stop_cell_counts, 0U);
-    cut_stop_cell_counts.resize(n_of_cells);
-    std::ranges::fill(cut_stop_cell_counts, 0U);
-    for (auto& cell_idxs : location_cell_idxs) {
+    internal_cmpnt_cell_counts.resize(n_of_cells);
+    std::ranges::fill(internal_cmpnt_cell_counts, 0U);
+    cut_cmpnt_cell_counts.resize(n_of_cells);
+    std::ranges::fill(cut_cmpnt_cell_counts, 0U);
+    for (auto& cell_idxs : component_cell_idxs) {
       std::ranges::transform(cell_idxs, cell_idxs.begin(), [](cell_idx_t const& cell_idx) {
         return route_partition::get_parent_idx(cell_idx);
       });
