@@ -320,7 +320,6 @@ void mc_raptor::reconstruct() const {
 
     for (auto k = 0U; k != end_k(); ++k) {
       auto const& round_bag = state_.round_bags_[k][loc];
-      std::cout << k << " " << round_bag.size() << std::endl;
       if (round_bag.size() == 0) {
         continue;
       }

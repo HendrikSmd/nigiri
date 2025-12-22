@@ -104,9 +104,9 @@ void route_partition::assign_cells_to_components(timetable const& tt) {
   }
 }
 
-size_t route_partition::get_num_of_cells_on_level(uint8_t const level) const {
+cista::base_t<cell_idx_t> route_partition::get_num_of_cells_on_level(cista::base_t<cell_idx_t> const level) const {
   assert(n_levels_ >= level);
-  return 1U << static_cast<size_t>(n_levels_ - level);
+  return static_cast<cista::base_t<cell_idx_t>>(1U << (n_levels_ - level));
 }
 
 cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint16_t level) const {
