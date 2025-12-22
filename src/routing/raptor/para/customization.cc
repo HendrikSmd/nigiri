@@ -33,7 +33,16 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(level), level);
 
     finished_.store(false);
-    std::thread logger_thread([this] {this->log_progress();});
+    std::thread logger_thread([this] {
+      while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(5U));
+        if (finished_) {
+          return;
+        }
+
+        log_progress();
+      }
+    });
 
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(level); ++cell_idx) {
       cell_cut_stops_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
@@ -46,6 +55,11 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     finished_.store(true);
     logger_thread.join();
     prepare_next_level();
+    if (std::ranges::all_of(cell_cut_stops_, [](const bitvec& bv){return !bv.any();})) {
+      log(log_lvl::info, "customization", "No more cut stops. Terminating shortly");
+      log_progress();
+      break;
+    }
   }
 
 
@@ -55,17 +69,11 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
 }
 
 void customizer::log_progress() const {
-  while (true) {
-    std::this_thread::sleep_for(std::chrono::seconds(5UL));
-    if (finished_) {
-      return;
-    }
     std::cout << "Progress Update:\n";
     for (auto c_idx = cell_idx_t{0U}; c_idx < static_cast<cista::base_t<cell_idx_t>>(cell_cut_stops_.size()); ++c_idx) {
       std::cout << "Cell " << c_idx << ": " << cell_progress_[to_idx(c_idx)] << "/" << cell_cut_stops_[to_idx(c_idx)].count() << std::endl;
     }
     std::cout << std::endl;
-  }
 }
 
 void customizer::initialize(route_partition const& p) {
