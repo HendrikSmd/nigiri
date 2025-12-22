@@ -49,7 +49,7 @@ def get_center(data):
     return [mean_lat, mean_lon]
 
 n_cells_in_lowest_level = 8
-level = 1
+level = 0
 colors = get_n_colors(n_cells_in_lowest_level)
 
 with open("/home/hendrik/Documents/GitHub/nigiri/cmake-build-release-clang-17-1/out.json") as f:

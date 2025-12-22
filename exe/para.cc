@@ -1,16 +1,21 @@
 #include <vector>
 #include <string_view>
+#include <sstream>
+#include <chrono>
 #include <string>
 
 #include "boost/program_options.hpp"
 
 #include "nigiri/loader/load.h"
 #include "nigiri/routing/pareto_set.h"
+#include "nigiri/routing/raptor/para/customization.h"
 #include "nigiri/routing/raptor/para/export_partition.h"
+#include "nigiri/routing/raptor/para/mc_raptor_search.h"
 #include "nigiri/routing/raptor/para/route_hyper_graph.h"
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/routing/raptor/raptor.h"
 #include "nigiri/routing/raptor/raptor_state.h"
+#include "nigiri/routing/raptor_search.h"
 #include "nigiri/routing/search.h"
 #include "nigiri/timetable.h"
 
@@ -19,6 +24,7 @@
 namespace fs = std::filesystem;
 namespace bpo = boost::program_options;
 using namespace nigiri;
+using namespace date;
 
 struct sub_command {
   std::string_view literal;
@@ -37,13 +43,27 @@ constexpr size_t get_max_sub_command_length(const std::array<sub_command, N>& ar
   );
 }
 
+pareto_set<routing::journey> raptor_search(
+    timetable const& tt, routing::query q) {
+  using namespace nigiri;
+  using algo_state_t = routing::raptor_state;
+  static auto search_state = routing::search_state{};
+  static auto algo_state = algo_state_t{};
+
+  return *(routing::raptor_search(tt, nullptr, search_state, algo_state,
+                                  std::move(q), direction::kForward)
+               .journeys_);
+}
+
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 3> sub_commands = {
+  static constexpr std::array<sub_command, 5> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
-      {"export-partition", "exports a partition in a supported format"}
+      {"export-partition", "exports a partition in a supported format"},
+      {"start-customization", "start the customization process"},
+      {"resume-customization", "resume the customization process"}
     }
   };
 
@@ -142,11 +162,11 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in_tt);
     tt.resolve();
 
-    routing::route_partition partition;
+    routing::para::route_partition partition;
     partition.from_hmetis_result(in_part, tt);
     fmt::print("Finished reading in route partition with {} levels\n", partition.n_levels_);
 
-    const auto count_cells = [](routing::route_partition const& partition, std::vector<size_t>& counts) {
+    const auto count_cells = [](routing::para::route_partition const& partition, std::vector<size_t>& counts) {
       auto const n_cells = 1U << partition.n_levels_;
       counts.resize(n_cells, 0U);
       for (const auto& cell_idx : partition.route_to_cell_idx_) {
@@ -190,7 +210,7 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in_tt);
     tt.resolve();
 
-    auto route_part = *routing::route_partition::read(in_part);
+    auto route_part = *routing::para::route_partition::read(in_part);
 
     static constexpr std::array<std::string_view, 2> format_to_suffix = {
       ".json",
@@ -217,32 +237,97 @@ int main(int argc, char** argv) {
       default:
         std::cout << "invalid format!" << std::endl;
     }
-  } else if (command == "customize") {
-    auto tt = *timetable::read("../cmake-build-debug-clang-17/tt-swiss.bin");
-    tt.resolve();
-    std::cout << tt.internal_interval() << std::endl;
-    location_idx_t dest{29773};
-    location_idx_t src{17093};
+  } else if (command == "start-customization") {
+    auto in_part = fs::path{};
+    auto in_tt = fs::path{};
+    auto out = fs::path{"store.bin"};
+    auto n_threads = std::size_t{0};
 
-    auto q = routing::query{
-      .start_time_ = interval{unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours},
-      .use_start_footpaths_ = true,
-      .start_ = {{src, 0_minutes, 0U}},
-      .destination_ = {{dest, 0_minutes, 0U}},
-      .prf_idx_ = 0,
-    };
-    const auto res = raptor_search(tt, q);
-    std::cout << res.size() << std::endl;
-    for (const auto& j : res) {
-      std::cout << j.departure_time() << ", " << j.arrival_time() << "@" << j.dest_ << std::endl;
+    bpo::options_description start_custom_desc("export-hgraph options");
+    start_custom_desc.add_options()
+        ("in_part", bpo::value(&in_part), "path to the route partition file (nigiri format)")
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("t", bpo::value(&n_threads)->default_value(1U), "number of threads")
+        ("out", bpo::value(&out)->default_value(out), "path to the output file");
+
+
+    if (vm.contains("help")) {
+      std::cout << start_custom_desc << "\n\n";
+      return 0;
     }
 
-    //for (auto l = location_idx_t{0}; l < tt.n_locations(); ++l) {
-    //  const auto& name = tt.locations_.names_[l];
-   //   if (name.view().contains("Zürich")) {
-     //   std::cout << l << ": " << name.view() << std::endl;
-     // }
-    } else {
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(start_custom_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    routing::para::customizer customizer{tt};
+    std::cout << n_threads << std::endl;
+    auto const store = customizer.construct_route_rank_store(
+      std::move(*routing::para::route_partition::read(in_part)),
+      n_threads
+    );
+    store.write(out);
+
+  } else if (command == "resume-customization") {
+    auto in_store = fs::path{};
+    auto in_tt = fs::path{};
+
+    bpo::options_description resume_customization("resume-customization options");
+    resume_customization.add_options()
+        ("in_store", bpo::value(&in_store), "path to the route rank store")
+        ("in_tt", bpo::value(&in_tt), "path to the timetable");
+
+    if (vm.contains("help")) {
+      std::cout << resume_customization << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(resume_customization).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto store = *routing::para::route_rank_store::read(in_store);
+  } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }
+
+  /*
+  auto tt = *timetable::read("/home/hendrik/Documents/GitHub/nigiri/timetables/tt-swiss.bin");
+  tt.resolve();
+
+  interval search_interval = {unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours};
+  location start_loc(tt, location_idx_t{17093});
+  location dest_loc(tt, location_idx_t{29773});
+  bitvec route_mask = bitvec::max(tt.n_routes());
+  bitvec reconstruct_mask(tt.n_locations());
+  reconstruct_mask.set(to_idx(dest_loc.l_));
+
+  const auto& res = routing::para::mc_raptor_search(tt, start_loc.id_, search_interval, reconstruct_mask, route_mask);
+  for (const auto& j : res.front()) {
+  std::cout << "dep at: " << j.departure_time() << ", arr at: " << j.arrival_time() << " with " << std::to_string(j.transfers_) << " transfers" << std::endl;
+  }
+
+  auto q = routing::query{
+  .start_time_ = interval{unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours},
+  .use_start_footpaths_ = true,
+  .start_ = {{start_loc.l_, 0_minutes, 0U}},
+  .destination_ = {{dest_loc.l_, 0_minutes, 0U}},
+  .prf_idx_ = 0,
+  };
+  std::cout << std::endl;
+  const auto res_old = raptor_search(tt, q);
+  for (const auto& j : res_old) {
+  std::cout << "dep at: " << j.departure_time() << ", arr at: " << j.arrival_time() << " with " << std::to_string(j.transfers_) << " transfers" << std::endl;
+  }
+   */
 }

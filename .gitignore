@@ -4,4 +4,5 @@
 /.clang-tidy
 /.vscode
 /timetables
+/partitions
 shape*.bin

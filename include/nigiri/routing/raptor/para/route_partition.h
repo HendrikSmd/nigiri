@@ -21,7 +21,7 @@ struct route_partition {
 
   static cista::wrapped<route_partition> read(std::filesystem::path const&);
 
-  size_t get_num_of_cells_on_level(uint8_t level) const;
+  cista::base_t<cell_idx_t> get_num_of_cells_on_level(cista::base_t<cell_idx_t> level) const;
 
   cell_idx_t get_cell_of_route(route_idx_t r_idx, uint16_t level) const;
 
