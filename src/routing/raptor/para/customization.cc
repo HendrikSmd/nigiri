@@ -271,7 +271,7 @@ void customizer::update_ranks_for(journey const& j,
 
       // make sure our journey does not contain a leg that
       // uses a route we masked out
-      assert(route_masks_[to_idx(cell)][to_idx(r_idx)]);
+      assert(route_masks_[to_idx(cell)][to_idx(route_idx)]);
 
       route_ranks_[route_idx] = route_rank_t{level + 1};
       transport_ranks_[transport_idx] = transport_rank_t{level + 1};
