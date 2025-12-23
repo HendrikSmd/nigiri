@@ -55,7 +55,7 @@ void mc_raptor::route() {
   std::vector<start> starts;
 
   get_starts(direction::kForward, tt_, nullptr, search_interval_, start_,
-             {}, kMaxTravelTime, start_match_mode_, true, starts, true,
+             {},{}, kMaxTravelTime, start_match_mode_, true, starts, true,
              kDefaultProfile, {}, route_mask_);
   utl::equal_ranges_linear(
       starts,
@@ -311,15 +311,15 @@ transport mc_raptor::get_earliest_transport(const mc_raptor_label& current,
 
 void mc_raptor::reconstruct() const {
   size_t w_idx = 0U;
-  for (auto loc = 0U; loc != n_locations_; ++loc) {
-    if (!reconstruct_mask_[loc]) {
+  for (auto location_idx = 0U; location_idx != n_locations_; ++location_idx) {
+    if (!reconstruct_mask_[location_idx]) {
       continue;
     }
 
-    const auto fastest_direct = get_fastest_direct(location_idx_t{loc});
+    const auto fastest_direct = get_fastest_direct(location_idx_t{location_idx});
 
     for (auto k = 0U; k != end_k(); ++k) {
-      auto const& round_bag = state_.round_bags_[k][loc];
+      auto const& round_bag = state_.round_bags_[k][location_idx];
       if (round_bag.size() == 0) {
         continue;
       }
@@ -337,7 +337,7 @@ void mc_raptor::reconstruct() const {
             journey{.legs_ = {},
                     .start_time_ = journey_it->departure_.to_unixtime(tt_),
                     .dest_time_ = get<0>(journey_it->arrival_).to_unixtime(tt_),
-                    .dest_ = location_idx_t{loc},
+                    .dest_ = location_idx_t{location_idx},
                     .transfers_ = static_cast<std::uint8_t>(k - 1)});
         if (!optimal) {
           continue;
@@ -389,9 +389,9 @@ void mc_raptor::reconstruct() const {
                 nigiri::log(log_lvl::error,
                             "mc_raptor.reconstruction",
                             "Footpath {} -- {} --> {}, used in routing does not exist!",
-                            location{tt_, curr_transport_leg.exit_},
+                            loc{tt_, curr_transport_leg.exit_},
                             curr_transfer_leg.duration_,
-                            location{tt_, curr_transfer_leg.target_});
+                            loc{tt_, curr_transfer_leg.target_});
               }
             }
 
@@ -422,8 +422,8 @@ void mc_raptor::reconstruct() const {
                   "mc_raptor.reconstruction",
                   "Invalid transport ride used while routing. Not possible to enter transport {} at {} and exit at {}",
                   curr_transport_leg.via_,
-                  location{tt_, curr_transport_leg.enter_},
-                  location{tt_, curr_transport_leg.exit_});
+                  loc{tt_, curr_transport_leg.enter_},
+                  loc{tt_, curr_transport_leg.exit_});
             }
           }
 
@@ -457,7 +457,7 @@ void mc_raptor::reconstruct() const {
           current_label = prev_label;
         }
         const auto target_after_init_transfer =
-            k == 0 ? location_idx_t{loc} : current_label->with_->enter_;
+            k == 0 ? location_idx_t{location_idx} : current_label->with_->enter_;
 
         if (k > 0) {
           current_label = current_label->prev_;

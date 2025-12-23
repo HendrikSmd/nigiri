@@ -6,8 +6,9 @@
 #include "boost/asio/post.hpp"
 #include "boost/asio/thread_pool.hpp"
 
-#include "nigiri/loader/gtfs/route.h"
+#include "utl/zip.h"
 
+#include "nigiri/loader/gtfs/route.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
 
 namespace nigiri::routing::para {
@@ -186,7 +187,7 @@ void customizer::cut_stop_routing_task(location_idx_t const cut_stop_from,
                                        cell_idx_t const cell,
                                        cista::base_t<cell_idx_t> const level) {
   const auto& res = mc_raptor_search(tt_,
-                                     location{tt_, cut_stop_from}.id_,
+                                     cut_stop_from,
                                      cell_cut_stops_[to_idx(cell)],
                                      route_masks_[to_idx(cell)]);
   std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);

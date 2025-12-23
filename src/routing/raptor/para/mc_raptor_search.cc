@@ -10,12 +10,11 @@
 namespace nigiri::routing::para {
 
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
-                                                  std::string_view const from,
+                                                  location_idx_t const from,
                                                   std::string_view const start_time,
                                                   std::string_view const end_time,
                                                   bitvec const& reconstruct_mask,
                                                   bitvec const& route_mask) {
-  constexpr auto src = source_idx_t{0};
   mc_raptor_state state{};
 
   interval<unixtime_t> inter;
@@ -26,7 +25,7 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                    inter,
                    location_match_mode::kExact,
                    {
-                     {tt.locations_.location_id_to_idx_.at({from, src}), 0_minutes, 0U}
+                     {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
                    route_mask};
@@ -35,18 +34,17 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
 }
 
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
-                                                  std::string_view const from,
+                                                  location_idx_t const from,
                                                   interval<unixtime_t> const time,
                                                   bitvec const& reconstruct_mask,
                                                   bitvec const& route_mask) {
-  constexpr auto src = source_idx_t{0};
   mc_raptor_state state{};
   mc_raptor raptor{tt,
                    state,
                    time,
                    location_match_mode::kExact,
                    {
-                       {tt.locations_.location_id_to_idx_.at({from, src}), 0_minutes, 0U}
+                       {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
                    route_mask};
@@ -55,18 +53,17 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
 }
 
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
-                                                  std::string_view const from,
+                                                  location_idx_t const from,
                                                   bitvec const& reconstruct_mask,
                                                   bitvec const& route_mask) {
   // Caveat: This searches the whole timetable!
-  constexpr auto src = source_idx_t{0};
   mc_raptor_state state{};
   mc_raptor raptor{tt,
                    state,
                    tt.internal_interval(),
                    location_match_mode::kExact,
                    {
-                         {tt.locations_.location_id_to_idx_.at({from, src}), 0_minutes, 0U}
+                         {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
                    route_mask};
