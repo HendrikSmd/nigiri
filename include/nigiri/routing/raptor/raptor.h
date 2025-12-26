@@ -38,6 +38,8 @@ struct raptor_stats {
          fp_update_prevented_by_lower_bound_},
         {"route_update_prevented_by_lower_bound",
          route_update_prevented_by_lower_bound_},
+        {"n_route_scan_pruned_by_para",
+           n_route_scan_pruned_by_para},
     };
   }
 

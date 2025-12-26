@@ -91,7 +91,9 @@ struct benchmark_result {
                br.routing_result_.interval_.size())
                .count()
         << "h" << ", #jrny: " << std::setfill(' ') << std::setw(2)
-        << br.journeys_.size() << ")";
+        << br.journeys_.size() << ", #para-routes-skipped: " << std::setfill(' ')
+        << std::setw(5) << br.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para")
+        << ")";
     return out;
   }
 
@@ -385,6 +387,12 @@ void print_results(
     return a.journeys_.size() < b.journeys_.size();
   });
   print_result(results, "#journeys");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+  return a.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para") <
+         b.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para");
+  });
+  print_result(results, "#route scans pruned by para");
 }
 
 void print_memory_usage() {
