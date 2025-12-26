@@ -312,6 +312,27 @@ void route_rank_store::write(std::filesystem::path const& path) const {
   return cista::write(path, *this);
 }
 
+void route_rank_store::print_summary(std::ostream&) const {
+  std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
+  std::vector<size_t> transport_rank_counts(partition_.n_levels_ + 1, 0ULL);
+
+  auto const n_routes = route_ranks_.size();
+  for (auto r = route_idx_t{0}; r < n_routes; ++r) {
+    route_rank_counts[to_idx(route_ranks_[r])]++;
+  }
+
+  auto const n_transports = transport_ranks_.size();
+  for (auto t = transport_idx_t{0}; t < n_transports; ++t) {
+    transport_rank_counts[to_idx(transport_ranks_[t])]++;
+  }
+
+  std::cout << "Counts per rank: " << std::endl;
+  for (size_t rank = 0U; rank <= partition_.n_levels_; ++rank) {
+    std::cout << "  rank=" << std::left << std::setw(10) << rank << ": " << route_rank_counts[rank] << "/" << n_routes << " routes, "
+    << transport_rank_counts[rank] << "/" << n_transports << " transports" << std::endl;
+  }
+}
+
 cista::wrapped<route_rank_store> route_rank_store::read(std::filesystem::path const& path) {
   return cista::read<route_rank_store>(path);
 }

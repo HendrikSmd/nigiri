@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
       {"import-partition", "imports a partition file"},
       {"export-partition", "exports a partition in a supported format"},
       {"start-customization", "start the customization process"},
-      {"resume-customization", "resume the customization process"}
+      {"inspect-rank-store", "outputs information on the given rank store"}
     }
   };
 
@@ -273,61 +273,26 @@ int main(int argc, char** argv) {
     );
     store.write(out);
 
-  } else if (command == "resume-customization") {
+  } else if (command == "inspect-rank-store") {
     auto in_store = fs::path{};
-    auto in_tt = fs::path{};
 
-    bpo::options_description resume_customization("resume-customization options");
-    resume_customization.add_options()
-        ("in_store", bpo::value(&in_store), "path to the route rank store")
-        ("in_tt", bpo::value(&in_tt), "path to the timetable");
+    bpo::options_description inspect_rank_store("inspect-rank-store options");
+    inspect_rank_store.add_options()
+        ("in_store", bpo::value(&in_store), "path to the rank store");
 
     if (vm.contains("help")) {
-      std::cout << resume_customization << "\n\n";
+      std::cout << inspect_rank_store << "\n\n";
       return 0;
     }
 
     std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
     opts.erase(opts.begin());
 
-    bpo::store(bpo::command_line_parser(opts).options(resume_customization).run(), cvm);
+    bpo::store(bpo::command_line_parser(opts).options(inspect_rank_store).run(), cvm);
     bpo::notify(cvm);
-
-    auto tt = *timetable::read(in_tt);
-    tt.resolve();
-
     auto store = *routing::para::route_rank_store::read(in_store);
+    store.print_summary(std::cout);
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }
-
-  /*
-  auto tt = *timetable::read("/home/hendrik/Documents/GitHub/nigiri/timetables/tt-swiss.bin");
-  tt.resolve();
-
-  interval search_interval = {unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours};
-  location start_loc(tt, location_idx_t{17093});
-  location dest_loc(tt, location_idx_t{29773});
-  bitvec route_mask = bitvec::max(tt.n_routes());
-  bitvec reconstruct_mask(tt.n_locations());
-  reconstruct_mask.set(to_idx(dest_loc.l_));
-
-  const auto& res = routing::para::mc_raptor_search(tt, start_loc.id_, search_interval, reconstruct_mask, route_mask);
-  for (const auto& j : res.front()) {
-  std::cout << "dep at: " << j.departure_time() << ", arr at: " << j.arrival_time() << " with " << std::to_string(j.transfers_) << " transfers" << std::endl;
-  }
-
-  auto q = routing::query{
-  .start_time_ = interval{unixtime_t{sys_days{2024_y / March / 10}} + 8_hours, unixtime_t{sys_days{2024_y / March / 10}} + 10_hours},
-  .use_start_footpaths_ = true,
-  .start_ = {{start_loc.l_, 0_minutes, 0U}},
-  .destination_ = {{dest_loc.l_, 0_minutes, 0U}},
-  .prf_idx_ = 0,
-  };
-  std::cout << std::endl;
-  const auto res_old = raptor_search(tt, q);
-  for (const auto& j : res_old) {
-  std::cout << "dep at: " << j.departure_time() << ", arr at: " << j.arrival_time() << " with " << std::to_string(j.transfers_) << " transfers" << std::endl;
-  }
-   */
 }

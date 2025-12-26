@@ -72,6 +72,7 @@ struct route_rank_store {
 
   static cista::wrapped<route_rank_store>       read(std::filesystem::path const&);
   void                                          write(std::filesystem::path const&) const;
+  void                                          print_summary(std::ostream&) const;
 
   vector_map<route_idx_t, route_rank_t> route_ranks_;
   vector_map<transport_idx_t, transport_rank_t> transport_ranks_;
