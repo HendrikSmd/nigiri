@@ -18,6 +18,7 @@ customizer::customizer(timetable const& tt) :
 
 route_rank_store customizer::construct_route_rank_store(route_partition partition,
                                                         unsigned const n_threads) {
+  auto const timer = scoped_timer("customization");
   log(log_lvl::info, "customization", "using {} threads on timetable from {} to {}",
     n_threads,
     tt_.external_interval().from_,
