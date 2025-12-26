@@ -15,4 +15,12 @@ routing_result raptor_search(
     direction search_dir,
     std::optional<std::chrono::seconds> timeout = std::nullopt);
 
+routing_result para_raptor_search(
+    timetable const& tt,
+    para::route_rank_store const& rrs,
+    search_state& s_state,
+    raptor_state& r_state,
+    query q,
+    std::optional<std::chrono::seconds> timeout = std::nullopt);
+
 }  // namespace nigiri::routing

@@ -63,6 +63,16 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     }
   }
 
+  std::vector<size_t> route_rank_counts(partition.n_levels_ + 1, 0U);
+  for (auto r = route_idx_t{0U}; r < tt_.n_routes(); ++r) {
+    route_rank_counts[to_idx(route_ranks_[r])]++;
+  }
+
+  std::cout << "Final route rank distribution:" << std::endl;
+  for (cista::base_t<cell_idx_t> level = 0U; level <= partition.n_levels_; ++level) {
+    std::cout << "Level " << level << ": " << route_rank_counts[level] << "/" << tt_.n_routes() << std::endl;
+  }
+
 
   return route_rank_store(std::move(route_ranks_),
                           std::move(transport_ranks_),

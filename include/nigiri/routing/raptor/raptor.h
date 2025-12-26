@@ -16,7 +16,12 @@
 #include "nigiri/timetable.h"
 #include "nigiri/types.h"
 
+#include "para/customization.h"
+
 namespace nigiri::routing {
+namespace para {
+struct route_rank_store;
+}
 
 struct raptor_stats {
   std::map<std::string, std::uint64_t> to_map() const {
@@ -50,6 +55,8 @@ struct raptor_stats {
         o.fp_update_prevented_by_lower_bound_;
     copy.route_update_prevented_by_lower_bound_ +=
         o.route_update_prevented_by_lower_bound_;
+    copy.n_route_scan_pruned_by_para +=
+        o.n_route_scan_pruned_by_para;
     return copy;
   }
 
@@ -61,14 +68,18 @@ struct raptor_stats {
   std::uint64_t n_earliest_arrival_updated_by_footpath_{0ULL};
   std::uint64_t fp_update_prevented_by_lower_bound_{0ULL};
   std::uint64_t route_update_prevented_by_lower_bound_{0ULL};
+  std::uint64_t n_route_scan_pruned_by_para{0ULL};
 };
 
 enum class search_mode { kOneToOne, kOneToAll };
 
+enum class version { kDefault, kPara };
+
 template <direction SearchDir,
           bool Rt,
           via_offset_t Vias,
-          search_mode SearchMode>
+          search_mode SearchMode,
+          version algo_version = version::kDefault>
 struct raptor {
   using algo_state_t = raptor_state;
   using algo_stats_t = raptor_stats;
@@ -97,58 +108,68 @@ struct raptor {
   static auto dir(auto a) { return (kFwd ? 1 : -1) * a; }
 
   raptor(
-      timetable const& tt,
-      rt_timetable const* rtt,
-      raptor_state& state,
-      bitvec& is_dest,
-      std::array<bitvec, kMaxVias>& is_via,
-      std::vector<std::uint16_t>& dist_to_dest,
-      hash_map<location_idx_t, std::vector<td_offset>> const& td_dist_to_dest,
-      std::vector<std::uint16_t>& lb,
-      std::vector<via_stop> const& via_stops,
-      day_idx_t const base,
-      clasz_mask_t const allowed_claszes,
-      bool const require_bike_transport,
-      bool const require_car_transport,
-      bool const is_wheelchair,
-      transfer_time_settings const& tts)
-      : tt_{tt},
-        rtt_{rtt},
-        n_days_{tt_.internal_interval_days().size().count()},
-        n_locations_{tt_.n_locations()},
-        n_routes_{tt.n_routes()},
-        n_rt_transports_{Rt ? rtt->n_rt_transports() : 0U},
-        state_{state.resize(n_locations_, n_routes_, n_rt_transports_)},
-        tmp_{state_.get_tmp<Vias>()},
-        best_{state_.get_best<Vias>()},
-        round_times_{state.get_round_times<Vias>()},
-        is_dest_{is_dest},
-        is_via_{is_via},
-        dist_to_end_{dist_to_dest},
-        td_dist_to_end_{td_dist_to_dest},
-        lb_{lb},
-        via_stops_{via_stops},
-        base_{base},
-        allowed_claszes_{allowed_claszes},
-        require_bike_transport_{require_bike_transport},
-        require_car_transport_{require_car_transport},
-        is_wheelchair_{is_wheelchair},
-        transfer_time_settings_{tts} {
-    assert(Vias == via_stops_.size());
-    reset_arrivals();
-    if (!dist_to_end_.empty()) {
-      // only used for intermodal queries (dist_to_dest != empty)
-      end_reachable_.resize(n_locations_);
-      for (auto i = 0U; i != dist_to_end_.size(); ++i) {
-        if (dist_to_end_[i] != kUnreachable) {
-          end_reachable_.set(i, true);
-        }
-      }
-      for (auto const& [l, _] : td_dist_to_end_) {
-        end_reachable_.set(to_idx(l), true);
-      }
-    }
-  }
+    timetable const& tt,
+    raptor_state& state,
+    bitvec& is_dest,
+    std::array<bitvec, kMaxVias>& is_via,
+    std::vector<std::uint16_t>& dist_to_dest,
+    std::vector<std::uint16_t>& lb,
+    day_idx_t const base,
+    std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
+    para::route_rank_store const& rank_store) requires (algo_version == version::kPara)
+      : raptor(
+          tt,
+          nullptr,
+          state,
+          is_dest,
+          is_via,
+          dist_to_dest,
+          {},
+          lb,
+          {},
+          base,
+          all_clasz_allowed(),
+          false,
+          false,
+          false,
+          {},
+          std::move(start_dest_cmpnt),
+          &rank_store) {}
+
+  raptor(
+    timetable const& tt,
+    rt_timetable const* rtt,
+    raptor_state& state,
+    bitvec& is_dest,
+    std::array<bitvec, kMaxVias>& is_via,
+    std::vector<std::uint16_t>& dist_to_dest,
+    hash_map<location_idx_t, std::vector<td_offset>> const& td_dist_to_dest,
+    std::vector<std::uint16_t>& lb,
+    std::vector<via_stop> const& via_stops,
+    day_idx_t const base,
+    clasz_mask_t const allowed_claszes,
+    bool const require_bike_transport,
+    bool const require_car_transport,
+    bool const is_wheelchair,
+    transfer_time_settings const& tts) requires (algo_version == version::kDefault)
+      : raptor(
+          tt,
+          rtt,
+          state,
+          is_dest,
+          is_via,
+          dist_to_dest,
+          td_dist_to_dest,
+          lb,
+          via_stops,
+          base,
+          allowed_claszes,
+          require_bike_transport,
+          require_car_transport,
+          is_wheelchair,
+          tts,
+          std::pair(component_idx_t::invalid(), component_idx_t::invalid()),
+          nullptr) {}
 
   algo_stats_t get_stats() const { return stats_; }
 
@@ -320,6 +341,69 @@ struct raptor {
   }
 
 private:
+
+  raptor(
+  timetable const& tt,
+  rt_timetable const* rtt,
+  raptor_state& state,
+  bitvec& is_dest,
+  std::array<bitvec, kMaxVias>& is_via,
+  std::vector<std::uint16_t>& dist_to_dest,
+  hash_map<location_idx_t, std::vector<td_offset>> const& td_dist_to_dest,
+  std::vector<std::uint16_t>& lb,
+  std::vector<via_stop> const& via_stops,
+  day_idx_t const base,
+  clasz_mask_t const allowed_claszes,
+  bool const require_bike_transport,
+  bool const require_car_transport,
+  bool const is_wheelchair,
+  transfer_time_settings const& tts,
+  std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
+  para::route_rank_store const* rank_store)
+  : tt_{tt},
+    rtt_{rtt},
+    n_days_{tt_.internal_interval_days().size().count()},
+    n_locations_{tt_.n_locations()},
+    n_routes_{tt.n_routes()},
+    n_rt_transports_{Rt ? rtt->n_rt_transports() : 0U},
+    state_{state.resize(n_locations_, n_routes_, n_rt_transports_)},
+    tmp_{state_.get_tmp<Vias>()},
+    best_{state_.get_best<Vias>()},
+    round_times_{state.get_round_times<Vias>()},
+    is_dest_{is_dest},
+    is_via_{is_via},
+    dist_to_end_{dist_to_dest},
+    td_dist_to_end_{td_dist_to_dest},
+    lb_{lb},
+    via_stops_{via_stops},
+    base_{base},
+    allowed_claszes_{allowed_claszes},
+    require_bike_transport_{require_bike_transport},
+    require_car_transport_{require_car_transport},
+    is_wheelchair_{is_wheelchair},
+    transfer_time_settings_{tts},
+    start_dest_cmpnt_{start_dest_cmpnt},
+    rank_store_{rank_store} {
+    assert(Vias == via_stops_.size());
+    reset_arrivals();
+    if (!dist_to_end_.empty()) {
+      // only used for intermodal queries (dist_to_dest != empty)
+      end_reachable_.resize(n_locations_);
+      for (auto i = 0U; i != dist_to_end_.size(); ++i) {
+        if (dist_to_end_[i] != kUnreachable) {
+          end_reachable_.set(i, true);
+        }
+      }
+      for (auto const& [l, _] : td_dist_to_end_) {
+        end_reachable_.set(to_idx(l), true);
+      }
+    }
+  }
+
+  static route_rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
+    return route_rank_t{g_cell.level + static_cast<uint16_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
+  }
+
   date::sys_days base() const {
     return tt_.internal_interval_days().from_ + as_int(base_) * date::days{1};
   }
@@ -361,6 +445,18 @@ private:
             return;
           }
           section_car_filter = true;
+        }
+      }
+
+      if constexpr (algo_version == version::kPara) {
+        auto const& r_store = *rank_store_;
+        auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
+        auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
+        auto route_rank = r_store.route_ranks_[r];
+        if (route_rank < lcl(r_store.partition_.route_to_cell_idx_[r], g_cell_start) &&
+            route_rank < lcl(r_store.partition_.route_to_cell_idx_[r], g_cell_dest)) {
+          stats_.n_route_scan_pruned_by_para++;
+          return;
         }
       }
 
@@ -1264,6 +1360,8 @@ private:
   bool require_car_transport_;
   bool is_wheelchair_;
   transfer_time_settings transfer_time_settings_;
+  std::pair<component_idx_t, component_idx_t> start_dest_cmpnt_;
+  para::route_rank_store const* rank_store_;
 };
 
 }  // namespace nigiri::routing

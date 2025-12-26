@@ -46,6 +46,7 @@ void print_result(
 int main(int ac, char** av) {
   auto in_r = fs::path{};
   auto in_c = fs::path{};
+  bool equality_check = false;
 
   auto desc = bpo::options_description{"Options"};
   desc.add_options()  //
@@ -53,7 +54,8 @@ int main(int ac, char** av) {
       ("reference,r", bpo::value(&in_r),
        "path to binary dump of vector<pareto_set<journey>>")  //
       ("compare,c", bpo::value(&in_c),
-       "path to binary dump of vector<pareto_set<journey>>");
+       "path to binary dump of vector<pareto_set<journey>>")
+      ("equality", bpo::value(&equality_check), "check the equality of results");
   auto const pos = bpo::positional_options_description{}.add("in", -1);
 
   auto vm = bpo::variables_map{};
@@ -76,9 +78,9 @@ int main(int ac, char** av) {
     return 1;
   }
 
-  auto const ref = nigiri::qa::benchmark_criteria::read(
+  auto ref = nigiri::qa::benchmark_criteria::read(
       cista::memory_holder{cista::file{in_r.c_str(), "r"}.content()});
-  auto const cmp = nigiri::qa::benchmark_criteria::read(
+  auto cmp = nigiri::qa::benchmark_criteria::read(
       cista::memory_holder{cista::file{in_c.c_str(), "r"}.content()});
 
   auto rating_timing =
@@ -103,5 +105,29 @@ int main(int ac, char** av) {
             [](auto const& a, auto const& b) { return a.second < b.second; });
   print_result(rating_timing, "timing");
 
+  if (! equality_check) {
+    return 0;
+  }
+
+  auto ref_unwrapped = *ref;
+  auto cmp_unwrapped = *cmp;
+  std::vector<nigiri::qa::query_criteria> std_vec_ref(ref_unwrapped.qc_.begin(), ref_unwrapped.qc_.end());
+  std::vector<nigiri::qa::query_criteria> std_vec_cmp(cmp_unwrapped.qc_.begin(),cmp_unwrapped.qc_.end());
+
+
+  std::ranges::sort(std_vec_ref, [](nigiri::qa::query_criteria const& c1, nigiri::qa::query_criteria const& c2){ return c1.query_idx_ < c2.query_idx_; });
+  std::ranges::sort(std_vec_cmp, [](nigiri::qa::query_criteria const& c1, nigiri::qa::query_criteria const& c2){ return c1.query_idx_ < c2.query_idx_; });
+  size_t num_equal = 0U;
+  for (size_t i = 0; i < std_vec_ref.size(); ++i) {
+    std::vector<nigiri::qa::criteria_t> ref_res(std_vec_ref[i].jc_.begin(), std_vec_ref[i].jc_.end());
+    std::vector<nigiri::qa::criteria_t> cmp_res(std_vec_cmp[i].jc_.begin(), std_vec_cmp[i].jc_.end());
+    if (std::ranges::is_permutation(ref_res, cmp_res)) {
+      num_equal++;
+    } else {
+      std::cout << "query id " << i << " not equal" << std::endl;
+    }
+  }
+
+  std::cout << num_equal << "/" << std_vec_ref.size() << " equal!" << std::endl;
   return 0;
 }

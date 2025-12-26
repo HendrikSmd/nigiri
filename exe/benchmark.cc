@@ -11,6 +11,8 @@
 #include "nigiri/logging.h"
 #include "nigiri/qa/qa.h"
 #include "nigiri/query_generator/generator.h"
+#include "nigiri/routing/raptor/para/mc_raptor.h"
+#include "nigiri/routing/raptor/para/mc_raptor_search.h"
 #include "nigiri/routing/raptor/raptor.h"
 #include "nigiri/routing/raptor_search.h"
 #include "nigiri/routing/search.h"
@@ -134,7 +136,51 @@ nigiri::pareto_set<nigiri::routing::journey> raptor_search(
                .journeys_);
 }
 
-void process_queries(
+pareto_set<journey> mc_raptor_search(
+    timetable const& tt, query q, para::mc_raptor_state& state) {
+  using namespace nigiri;
+  utl::verify(std::holds_alternative<interval<unixtime_t>>(q.start_time_), "ontrip queries not supported in mc_raptor");
+  //utl::verify(q.start_match_mode_ == location_match_mode::kExact &&
+  //            q.dest_match_mode_ == location_match_mode::kExact,
+  //            "intermodal queries not supported in mc_raptor");
+  utl::verify(q.start_.size() == 1 && q.destination_.size() == 1, "mc_raptor only supports single start and destination");
+  utl::verify(q.start_.front().duration().count() == 0U &&
+              q.destination_.front().duration().count() == 0U,
+              "mc_raptor does not support any offsets");
+  utl::verify(q.max_start_offset_ == kMaxTravelTime, "max-start-offset: not supported by mc_raptor");
+  utl::verify(q.max_transfers_ == kMaxTransfers, "max-transfers: not supported by mc-raptor");
+  utl::verify(q.max_travel_time_ == kMaxTravelTime, "max-travel-time: not supported by mc-raptor");
+  utl::verify(q.min_connection_count_ == 0U, "min-connection-count: not supported by mc-raptor");
+  utl::verify(! q.extend_interval_earlier_, "Extending interval earlier not supported in mc_raptor");
+  utl::verify(! q.extend_interval_later_, "Extending interval later not supported in mc_raptor");
+  utl::verify(! q.max_interval_.has_value(), "interval extension not supported by mc-raptor");
+
+  auto from_idx = q.start_.front().target();
+  auto const intvl = std::get<interval<unixtime_t>>(q.start_time_);
+  bitvec dest_bv;
+  std::vector<uint16_t> dists;
+  collect_destinations(tt, q.destination_, q.dest_match_mode_, dest_bv, dists);
+  auto route_mask = bitvec::max(tt.n_routes());
+  para::mc_raptor raptor{tt,
+                 state,
+                 intvl,
+                 q.start_match_mode_,
+                 {
+                         {from_idx, 0_minutes, 0U}
+                 },
+                 dest_bv,
+                 route_mask};
+  raptor.route();
+  pareto_set<journey> merged;
+  for (auto& dest_res : state.results_) {
+    for (auto& j : dest_res) {
+      merged.add(std::move(j));
+    }
+  }
+  return merged;
+}
+
+void process_queries_raptor(
     std::vector<nigiri::query_generation::start_dest_query> const& queries,
     std::vector<benchmark_result>& results,
     nigiri::timetable const& tt) {
@@ -146,28 +192,66 @@ void process_queries(
     auto const progress_tracker = utl::activate_progress_tracker("benchmark");
     utl::get_global_progress_trackers().silent_ = false;
     progress_tracker->status("processing queries").in_high(queries.size());
-    struct query_state {
+    struct raptor_query_state {
       search_state ss_;
       raptor_state rs_;
     };
-    utl::parallel_for_run_threadlocal<query_state>(
-        queries.size(), [&](auto& query_state, auto const q_idx) {
-          try {
-            auto const total_time_start = std::chrono::steady_clock::now();
-            auto const result = routing::raptor_search(
-                tt, nullptr, query_state.ss_, query_state.rs_,
-                queries[q_idx].q_, direction::kForward);
-            auto const total_time_stop = std::chrono::steady_clock::now();
-            auto const guard = std::lock_guard{mutex};
-            results.emplace_back(benchmark_result{
-                q_idx, result, *result.journeys_,
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    total_time_stop - total_time_start)});
-            progress_tracker->increment();
-          } catch (std::exception const& e) {
-            std::cout << e.what();
-          }
-        });
+    utl::parallel_for_run_threadlocal<raptor_query_state>(
+      queries.size(), [&](auto& query_state, auto const q_idx) {
+      try {
+        auto const total_time_start = std::chrono::steady_clock::now();
+        auto const result = routing::raptor_search(
+            tt, nullptr, query_state.ss_, query_state.rs_,
+            queries[q_idx].q_, direction::kForward);
+        auto const total_time_stop = std::chrono::steady_clock::now();
+        auto const guard = std::lock_guard{mutex};
+        results.emplace_back(benchmark_result{
+            q_idx, result, *result.journeys_,
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                total_time_stop - total_time_start)});
+        progress_tracker->increment();
+      } catch (std::exception const& e) {
+        std::cout << e.what();
+      }
+    });
+  }
+}
+
+void process_queries_para_raptor(
+    std::vector<nigiri::query_generation::start_dest_query> const& queries,
+    std::vector<benchmark_result>& results,
+    nigiri::timetable const& tt,
+    para::route_rank_store const& rank_store) {
+  results.reserve(queries.size());
+  std::mutex mutex;
+  {
+    auto query_processing_timer =
+        scoped_timer(fmt::format("processing of {} queries", queries.size()));
+    auto const progress_tracker = utl::activate_progress_tracker("benchmark");
+    utl::get_global_progress_trackers().silent_ = false;
+    progress_tracker->status("processing queries").in_high(queries.size());
+    struct raptor_query_state {
+      search_state ss_;
+      raptor_state rs_;
+    };
+    utl::parallel_for_run_threadlocal<raptor_query_state>(
+      queries.size(), [&](auto& query_state, auto const q_idx) {
+      try {
+        auto const total_time_start = std::chrono::steady_clock::now();
+        auto const result = routing::para_raptor_search(
+            tt, rank_store, query_state.ss_, query_state.rs_,
+            queries[q_idx].q_);
+        auto const total_time_stop = std::chrono::steady_clock::now();
+        auto const guard = std::lock_guard{mutex};
+        results.emplace_back(benchmark_result{
+            q_idx, result, *result.journeys_,
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                total_time_stop - total_time_start)});
+        progress_tracker->increment();
+      } catch (std::exception const& e) {
+        std::cout << e.what();
+      }
+    });
   }
 }
 
@@ -316,6 +400,7 @@ int main(int argc, char* argv[]) {
   namespace bpo = boost::program_options;
 
   auto tt_path = std::filesystem::path{};
+  auto rank_store_path = std::filesystem::path{};
   auto n_queries = std::uint32_t{100U};
   auto gs = query_generation::generator_settings{};
   auto interval_size = duration_t::rep{};
@@ -333,11 +418,14 @@ int main(int argc, char* argv[]) {
   auto seed = std::int64_t{-1};
   auto min_transfer_time = duration_t::rep{};
   auto qa_path = std::filesystem::path{};
+  auto algorithm = std::string{};
 
   bpo::options_description desc("Allowed options");
   desc.add_options()("help,h", "produce this help message")  //
       ("tt_path,p", bpo::value(&tt_path)->required(),
        "path to a binary file containing a serialized nigiri timetable")  //
+      ("rs_path", bpo::value(&rank_store_path),
+     "  path to a binary file containing a serialized route rank store")  //
       ("seed,s", bpo::value<std::int64_t>(&seed),
        "value to seed the RNG of the query generator with, "
        "omit for random seed")  //
@@ -406,7 +494,8 @@ int main(int argc, char* argv[]) {
       ("dest_loc", bpo::value<location_idx_t::value_t>(&dest_loc_val),
        "destination location for random queries")  //
       ("qa_path,q", bpo::value(&qa_path),
-       "path to write the journey criteria to for qa");
+       "path to write the journey criteria to for qa")
+      ("algo", bpo::value(&algorithm), "raptor | para-raptor");
   bpo::variables_map vm;
   bpo::store(bpo::command_line_parser(argc, argv).options(desc).run(), vm);
 
@@ -421,6 +510,12 @@ int main(int argc, char* argv[]) {
   std::cout << "loading timetable...\n";
   auto tt = *nigiri::timetable::read(tt_path);
   tt.resolve();
+
+  utl::verify(algorithm == "raptor" || algorithm == "para-raptor", "unknown algorithm");
+  if (algorithm == "para-raptor") {
+    utl::verify(vm.count("rs_path") != 0U, "Rank store path required for para-raptor");
+  }
+
 
   gs.interval_size_ = duration_t{interval_size};
 
@@ -523,7 +618,13 @@ int main(int argc, char* argv[]) {
   generate_queries(queries, n_queries, tt, gs, seed);
 
   auto results = std::vector<benchmark_result>{};
-  process_queries(queries, results, tt);
+  if (algorithm == "raptor") {
+    process_queries_raptor(queries, results, tt);
+  } else if (algorithm == "para-raptor") {
+    std::cout << "loading timetable...\n";
+    auto rank_store = *nigiri::routing::para::route_rank_store::read(rank_store_path);
+    process_queries_para_raptor(queries, results, tt, rank_store);
+  }
 
   print_results(queries, results, tt, gs, tt_path);
 
