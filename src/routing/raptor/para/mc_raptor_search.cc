@@ -14,7 +14,9 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   std::string_view const start_time,
                                                   std::string_view const end_time,
                                                   bitvec const& reconstruct_mask,
-                                                  bitvec const& route_mask) {
+                                                  bitvec const& route_mask,
+                                                  bitvec const& transfer_mask,
+                                                  bool const use_start_footpaths) {
   mc_raptor_state state{};
 
   interval<unixtime_t> inter;
@@ -28,7 +30,9 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                      {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
-                   route_mask};
+                   route_mask,
+                   transfer_mask,
+                   use_start_footpaths};
   raptor.route();
   return state.results_;
 }
@@ -37,17 +41,21 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   location_idx_t const from,
                                                   interval<unixtime_t> const time,
                                                   bitvec const& reconstruct_mask,
-                                                  bitvec const& route_mask) {
+                                                  bitvec const& route_mask,
+                                                  bitvec const& transfer_mask,
+                                                  bool use_start_footpaths) {
   mc_raptor_state state{};
   mc_raptor raptor{tt,
                    state,
                    time,
                    location_match_mode::kExact,
                    {
-                       {from, 0_minutes, 0U}
+                      {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
-                   route_mask};
+                   route_mask,
+                   transfer_mask,
+                   use_start_footpaths};
   raptor.route();
   return state.results_;
 }
@@ -55,18 +63,23 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   location_idx_t const from,
                                                   bitvec const& reconstruct_mask,
-                                                  bitvec const& route_mask) {
+                                                  bitvec const& route_mask,
+                                                  bitvec const& transfer_mask,
+                                                  bool use_start_footpaths) {
   // Caveat: This searches the whole timetable!
   mc_raptor_state state{};
+
   mc_raptor raptor{tt,
                    state,
                    tt.internal_interval(),
                    location_match_mode::kExact,
                    {
-                         {from, 0_minutes, 0U}
+                     {from, 0_minutes, 0U}
                    },
                    reconstruct_mask,
-                   route_mask};
+                   route_mask,
+                   transfer_mask,
+                   use_start_footpaths};
   raptor.route();
   return state.results_;
 }

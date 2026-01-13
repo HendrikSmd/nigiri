@@ -22,24 +22,29 @@ mc_raptor::mc_raptor(timetable const& tt,
                      mc_raptor_state& state,
                      interval<unixtime_t> const search_interval,
                      location_match_mode const start_match_mode,
-                     std::vector<offset> const& start,
-                     bitvec const& reconstruct_mask,
-                     bitvec const& route_mask)
+                     std::vector<offset> const& starts,
+                     bitvec const& destination_mask,
+                     bitvec const& route_mask,
+                     bitvec const& transfer_mask,
+                     bool use_start_footpaths)
     : tt_{tt},
       n_tt_days_{tt_.internal_interval_days().size().count()},
       state_{state},
       search_interval_{search_interval},
       n_locations_{tt_.n_locations()},
       n_routes_{tt.n_routes()},
-      start_{start},
+      start_offsets_{starts},
       start_match_mode_{start_match_mode},
-      reconstruct_mask_(reconstruct_mask),
-      route_mask_(route_mask) {
-  assert(reconstruct_mask.size() == tt_.n_locations());
+      destination_mask_(destination_mask),
+      route_mask_(route_mask),
+      transfer_mask_(transfer_mask),
+      use_start_footpaths_(use_start_footpaths){
+  assert(destination_mask.size() == tt_.n_locations());
+  assert(transfer_mask.size() == tt_.n_locations());
   assert(route_mask.size() == tt_.n_routes());
   state_.resize(n_locations_,
                 n_routes_,
-                reconstruct_mask_.count());
+                destination_mask_.count());
   state_.round_bags_.reset(pareto_set<mc_raptor_label>{});
 }
 
@@ -54,8 +59,8 @@ unsigned mc_raptor::end_k() { return kMaxTransfers + 1U; }
 void mc_raptor::route() {
   std::vector<start> starts;
 
-  get_starts(direction::kForward, tt_, nullptr, search_interval_, start_,
-             {},{}, kMaxTravelTime, start_match_mode_, true, starts, true,
+  get_starts(direction::kForward, tt_, nullptr, search_interval_, start_offsets_,
+             {},{}, kMaxTravelTime, start_match_mode_, use_start_footpaths_, starts, true,
              kDefaultProfile, {}, route_mask_);
   utl::equal_ranges_linear(
       starts,
@@ -137,6 +142,10 @@ bool mc_raptor::update_route(unsigned const k, route_idx_t const route) {
     auto const stop_idx = static_cast<stop_idx_t>(i);
     auto const stp = stop{stop_sequence[stop_idx]};
     auto const l_idx = cista::to_idx(stp.location_idx());
+
+    if (!transfer_mask_[l_idx]) {
+      continue;
+    }
 
     auto const transfer_time_offset =
         tt_.locations_.transfer_time_[location_idx_t{l_idx}];
@@ -312,7 +321,7 @@ transport mc_raptor::get_earliest_transport(const mc_raptor_label& current,
 void mc_raptor::reconstruct() const {
   size_t w_idx = 0U;
   for (auto location_idx = 0U; location_idx != n_locations_; ++location_idx) {
-    if (!reconstruct_mask_[location_idx]) {
+    if (!destination_mask_[location_idx]) {
       continue;
     }
 
@@ -510,7 +519,7 @@ interval<stop_idx_t> mc_raptor::find_enter_exit(transport const via,
 }
 
 bool mc_raptor::is_journey_start(location_idx_t const l) const {
-  return utl::any_of(start_, [&](offset const& o) {
+  return utl::any_of(start_offsets_, [&](offset const& o) {
     return matches(tt_, start_match_mode_, o.target(), l);
   });
 }
@@ -549,7 +558,7 @@ std::optional<journey::leg> mc_raptor::find_start_footpath(
 
 duration_t mc_raptor::get_fastest_start_dest_overlap(location_idx_t const dest) const {
   auto min = duration_t{std::numeric_limits<duration_t::rep>::max()};
-  for (auto const& s : start_) {
+  for (auto const& s : start_offsets_) {
     for_each_meta(tt_, start_match_mode_, s.target_,
                   [&](location_idx_t const start) {
                       if (start == dest) {
@@ -562,7 +571,7 @@ duration_t mc_raptor::get_fastest_start_dest_overlap(location_idx_t const dest) 
 
 duration_t mc_raptor::get_fastest_direct_with_foot(location_idx_t const dest) const {
   auto min = duration_t{std::numeric_limits<duration_t::rep>::max()};
-  for (auto const& start : start_) {
+  for (auto const& start : start_offsets_) {
     for (auto const& footpaths = tt_.locations_.footpaths_out_[kDefaultProfile];
          auto const& fp : footpaths[start.target_]) {
         if (dest == fp.target()) {

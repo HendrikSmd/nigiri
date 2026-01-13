@@ -11,6 +11,8 @@
 #include "nigiri/loader/gtfs/route.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
 
+#include "utl/parallel_for.h"
+
 namespace nigiri::routing::para {
 
 customizer::customizer(timetable const& tt) :
@@ -18,7 +20,6 @@ customizer::customizer(timetable const& tt) :
 
 route_rank_store customizer::construct_route_rank_store(route_partition partition,
                                                         unsigned const n_threads) {
-  auto const timer = scoped_timer("customization");
   log(log_lvl::info, "customization", "using {} threads on timetable from {} to {}",
     n_threads,
     tt_.external_interval().from_,
@@ -31,7 +32,6 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     // overkill but reusing the old one for a new level
     // does not work, since after pool.wait(), the pool
     // does not accept anymore tasks
-    boost::asio::thread_pool pool(n_threads);
     log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(level), level);
 
     finished_.store(false);
@@ -46,14 +46,15 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
       }
     });
 
+    std::vector<thread_task> tasks;
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(level); ++cell_idx) {
       cell_cut_stops_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
-        boost::asio::post(pool, [this, idx, cell_idx, level] {
-          this->cut_stop_routing_task(location_idx_t{idx}, cell_idx, level);
-        });
+        tasks.emplace_back(cell_idx, location_idx_t{idx}, level);
       });
     }
-    pool.wait();
+    utl::parallel_for(tasks, [&](auto&& t) {
+      this->cut_stop_routing_task(t);
+    });
     finished_.store(true);
     logger_thread.join();
     prepare_next_level();
@@ -98,6 +99,8 @@ void customizer::initialize(route_partition const& p) {
 
   updated_routes_.clear();
   route_masks_.clear();
+  transfer_masks_.clear();
+  used_transfers_.clear();
   cell_cut_stops_.clear();
   cmpnt_to_current_lvl_cell_idxs_.clear();
 
@@ -106,6 +109,8 @@ void customizer::initialize(route_partition const& p) {
 
   updated_routes_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_routes()});
   route_masks_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_routes()});
+  transfer_masks_.resize(n_of_cells_on_first_lvl, bitvec::max(tt_.n_locations()));
+  used_transfers_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_locations()});
   cell_cut_stops_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_locations()});
 
 
@@ -117,6 +122,8 @@ void customizer::initialize(route_partition const& p) {
   // The cut stops have to be initialized after
   // the (cmpnt -> cell_idxs) have been initialized!!!
   initialize_cut_stops();
+  // must happen after cut stops have been initialized
+  initialize_used_transfers();
 }
 
 void customizer::initialize_route_masks(route_partition const& p) {
@@ -146,6 +153,13 @@ void customizer::initialize_cut_stops() {
   }
 }
 
+void customizer::initialize_used_transfers() {
+  for (auto [used_transfer_mask, cut_stop_mask] : utl::zip(used_transfers_, cell_cut_stops_)) {
+    used_transfer_mask.zero_out();
+    used_transfer_mask |= cut_stop_mask;
+  }
+}
+
 void customizer::prepare_next_level() {
   assert(std::has_single_bit(route_masks_.size()));
   assert(route_masks_.size() == updated_routes_.size());
@@ -168,9 +182,15 @@ void customizer::prepare_next_level() {
   // 4. unite cut stop masks. A cut stop of cell C on level i + 1 is a
   // cut stop on level i for one (or both) of C's children
   unite_cut_stops();
+
   // 5. update incident cell indexes of
   // components for next level
   update_cmpnt_cell_idxs_next_level();
+
+  unite_used_transfers();
+  transfer_masks_.resize(n_cells_in_next_level);
+  std::swap(transfer_masks_, used_transfers_);
+  initialize_used_transfers();
   std::ranges::fill(cell_progress_, 0U);
 }
 
@@ -194,13 +214,20 @@ void customizer::unite_cut_stops() {
   binary_or_reduce(cell_cut_stops_);
 }
 
-void customizer::cut_stop_routing_task(location_idx_t const cut_stop_from,
-                                       cell_idx_t const cell,
-                                       cista::base_t<cell_idx_t> const level) {
+void customizer::unite_used_transfers() {
+  binary_or_reduce(used_transfers_);
+}
+
+void customizer::cut_stop_routing_task(const thread_task& task) {
+  const auto cut_stop_from = task.location_idx_;
+  const auto cell = task.cell_idx_;
+  const auto level = task.level_;
   const auto& res = mc_raptor_search(tt_,
                                      cut_stop_from,
                                      cell_cut_stops_[to_idx(cell)],
-                                     route_masks_[to_idx(cell)]);
+                                     route_masks_[to_idx(cell)],
+                                     bitvec::max(tt_.n_locations()),
+                                     true);
   std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
   for (const auto& journeys : res) {
     for (const auto& j : journeys) {
@@ -275,6 +302,9 @@ void customizer::update_ranks_for(journey const& j,
                                   cista::base_t<cell_idx_t> const level,
                                   cell_idx_t const cell) {
   for (const auto& leg : j.legs_) {
+    auto& used_transfers_bv = used_transfers_[to_idx(cell)];
+    used_transfers_bv.set(to_idx(leg.from_), true);
+    used_transfers_bv.set(to_idx(leg.to_), true);
     if (uses_transport(leg)) {
       const auto& run = std::get<journey::run_enter_exit>(leg.uses_);
       const auto transport_idx = run.r_.t_.t_idx_;
