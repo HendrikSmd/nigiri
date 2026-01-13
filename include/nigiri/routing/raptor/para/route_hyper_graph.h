@@ -173,7 +173,7 @@ struct route_hyper_graph {
     //out_file << "% Hyper Edges:" << std::endl;
     for (size_t hedge_idx = 0U; hedge_idx < hyper_edges.size(); ++hedge_idx) {
       if (export_hedge_weights) {
-        out_file << hedge_weights[hedge_idx];
+        out_file << hedge_weights[hedge_idx] << " ";
       }
       auto& nodes = hyper_edges[hedge_idx];
       std::stringstream out_line;
