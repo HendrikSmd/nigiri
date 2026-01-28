@@ -8,7 +8,7 @@
 #include "nigiri/routing/raptor/para/mc_raptor.h"
 
 namespace nigiri::routing::para {
-
+/*
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   location_idx_t const from,
                                                   std::string_view const start_time,
@@ -59,27 +59,19 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
   raptor.route();
   return state.results_;
 }
-
+*/
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
-                                                  location_idx_t const from,
+                                                  mc_raptor_state& state,
                                                   bitvec const& reconstruct_mask,
                                                   bitvec const& route_mask,
-                                                  bitvec const& transfer_mask,
-                                                  bool use_start_footpaths) {
+                                                  bitvec const& transfer_mask) {
   // Caveat: This searches the whole timetable!
-  mc_raptor_state state{};
-
   mc_raptor raptor{tt,
                    state,
                    tt.internal_interval(),
-                   location_match_mode::kExact,
-                   {
-                     {from, 0_minutes, 0U}
-                   },
                    reconstruct_mask,
                    route_mask,
-                   transfer_mask,
-                   use_start_footpaths};
+                   transfer_mask};
   raptor.route();
   return state.results_;
 }
