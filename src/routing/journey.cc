@@ -59,7 +59,14 @@ void journey::print(std::ostream& out,
       << legs_.back().arr_time_ << "]\n";
   for (auto const [i, l] : utl::enumerate(legs_)) {
     out << "leg " << i << ": " << loc{tt, l.from_} << " [" << l.dep_time_
-        << "] -> " << loc{tt, l.to_} << " [" << l.arr_time_ << "]\n";
+        << "] -";
+    if (std::holds_alternative<run_enter_exit>(l.uses_)) {
+      const auto t = std::get<run_enter_exit>(l.uses_).r_.t_;
+      out << t << " of route " << tt.transport_route_[t.t_idx_];
+    } else {
+      out << "fp";
+    }
+    out << "-> " << loc{tt, l.to_} << " [" << l.arr_time_ << "]\n";
     l.print(out, tt, rtt, 1, debug);
   }
 }

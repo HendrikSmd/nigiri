@@ -526,7 +526,7 @@ inline auto format_as(loc const& l)
 
 inline std::ostream& operator<<(std::ostream& out, loc const& l) {
   auto const [id, name] = format_as(l);
-  return out << '(' << id << ", " << name << ')';
+  return out << '(' << id << ", " << name << ", " << l.l_ << ')';
 }
 
 }  // namespace nigiri
