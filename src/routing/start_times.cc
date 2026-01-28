@@ -11,6 +11,10 @@
 
 namespace nigiri::routing {
 
+bool cmpnt_dep_event::operator<(cmpnt_dep_event const& rhs) const {
+  return this->dep_time_ < rhs.dep_time_;
+}
+
 constexpr auto const kTracing = false;
 
 using location_offset_t = std::variant<duration_t, std::span<td_offset const>>;
@@ -34,6 +38,91 @@ template <typename... Args>
 void trace_start(char const* fmt_str, Args... args) {
   if constexpr (kTracing) {
     fmt::print(std::cout, fmt::runtime(fmt_str), std::forward<Args&&>(args)...);
+  }
+}
+
+void get_departure_events_at_stop(timetable const& tt,
+                                  route_idx_t const route_idx,
+                                  stop_idx_t const stop_idx,
+                                  cmpnt_loc_idx_t const location_idx,
+                                  std::vector<cmpnt_dep_event>& departure_events) {
+  const auto iv = tt.internal_interval();
+  auto const first_day_idx = tt.day_idx_mam(iv.from_).first;
+  auto const last_day_idx = tt.day_idx_mam(iv.to_).first;
+
+  auto const& transport_range = tt.route_transport_ranges_[route_idx];
+  for (auto t = transport_range.from_; t != transport_range.to_; ++t) {
+    auto const& traffic_days = tt.bitfields_[tt.transport_traffic_days_[t]];
+    auto const stop_time = tt.event_mam(t, stop_idx, event_type::kDep);
+
+    auto const day_offset =
+        static_cast<std::uint16_t>(stop_time.count() / 1440);
+    auto const stop_time_mam = duration_t{stop_time.count() % 1440};
+
+    for (auto day = first_day_idx; day <= last_day_idx; ++day) {
+      if (traffic_days.test(to_idx(day - day_offset)) &&
+          iv.contains(tt.to_unixtime(day, stop_time_mam))) {
+        auto const ev_time = tt.to_unixtime(day, stop_time_mam);
+
+        if (!iv.contains(ev_time)) {
+          continue;
+        }
+        departure_events.emplace_back(cmpnt_dep_event{.dep_time_ = ev_time,
+                                                      .transfer_duration_ = 0_minutes,
+                                                      .dep_loc_ = location_idx,
+                                                      .fin_dep_loc_ = location_idx});
+          }
+    }
+  }
+}
+
+void get_departure_events(
+    timetable const& tt,
+    location_idx_t const dep_loc_idx,
+    cmpnt_loc_idx_t const cmpnt_dep_loc_idx,
+    bitvec const& route_mask,
+    std::vector<cmpnt_dep_event>& departure_events
+) {
+  // Iterate routes visiting the location.
+  for (auto const& r : tt.location_routes_.at(dep_loc_idx)) {
+    if (!route_mask[to_idx(r)]) {
+      continue;
+    }
+    // Iterate the location sequence, searching the given location.
+    auto const location_seq = tt.route_location_seq_.at(r);
+    trace_start("  location_seq: route={}\n", r);
+    for (auto const [i, s] : utl::enumerate(location_seq)) {
+      auto const stp = stop{s};
+      if (stp.location_idx() != dep_loc_idx) {
+        continue;
+      }
+
+      // Ignore:
+      // - in-allowed=false for forward search
+      // - out-allowed=false for backward search
+      // - entering at last stp for forward search
+      // - exiting at first stp for backward search
+      if (i == location_seq.size() - 1 || !stp.in_allowed(profile_idx_t{0U})) {
+        continue;
+      }
+
+      get_departure_events_at_stop(
+          tt, r, static_cast<stop_idx_t>(i),
+          cmpnt_dep_loc_idx, departure_events);
+    }
+  }
+}
+
+void get_cmpnt_dep_events(
+    timetable const& tt,
+    component_idx_t const cmpnt_idx,
+    bitvec const& route_mask,
+    std::vector<std::vector<cmpnt_dep_event>>& cmpnt_dep_events) {
+  const auto& cmpnt_locs = tt.component_locations_[cmpnt_idx];
+  cmpnt_dep_events.resize(cmpnt_locs.size());
+  for (const auto [cmpnt_loc_idx, loc_idx] : utl::enumerate(cmpnt_locs)) {
+    get_departure_events(tt, loc_idx, cmpnt_loc_idx_t{cmpnt_loc_idx},
+                         route_mask, cmpnt_dep_events[cmpnt_loc_idx]);
   }
 }
 

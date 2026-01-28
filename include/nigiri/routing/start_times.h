@@ -14,7 +14,8 @@ struct timetable;
 struct rt_timetable;
 }  // namespace nigiri
 
-namespace nigiri::routing {
+namespace nigiri::routing
+{
 
 struct start {
   CISTA_FRIEND_COMPARABLE(start)
@@ -22,6 +23,22 @@ struct start {
   unixtime_t time_at_stop_;
   location_idx_t stop_;
 };
+
+struct cmpnt_dep_event {
+  unixtime_t dep_time_;
+  duration_t transfer_duration_;
+  cmpnt_loc_idx_t dep_loc_;
+  cmpnt_loc_idx_t fin_dep_loc_;
+
+  bool operator<(const cmpnt_dep_event& rhs) const;
+
+};
+
+void get_cmpnt_dep_events(
+  timetable const& tt,
+  component_idx_t cmpnt_idx,
+  bitvec const& route_mask,
+  std::vector<std::vector<cmpnt_dep_event>>& cmpnt_dep_events);
 
 void get_starts(
     direction,
