@@ -116,15 +116,17 @@ struct mc_raptor_state {
   mc_raptor_state& operator=(mc_raptor_state&&) = default;
   ~mc_raptor_state() = default;
 
-  void resize(size_t n_locations,
-              size_t n_routes,
-              size_t n_destinations);
+  void resize(unsigned n_locations,
+              unsigned n_routes,
+              unsigned n_destinations);
+
+  void reset();
 
   std::vector<pareto_set<mc_raptor_label>> best_;
   cista::raw::flat_matrix<pareto_set<mc_raptor_label>> round_bags_;
-  std::vector<bool> station_mark_;
-  std::vector<bool> prev_station_mark_;
-  std::vector<bool> route_mark_;
+  bitvec station_mark_;
+  bitvec prev_station_mark_;
+  bitvec route_mark_;
   std::vector<pareto_set<journey>> results_;
 };
 

@@ -25,12 +25,9 @@ struct mc_raptor {
     mc_raptor(timetable const& tt,
               mc_raptor_state& state,
               interval<unixtime_t> search_interval,
-              location_match_mode start_match_mode,
-              std::vector<offset> const& starts,
               bitvec const& destination_mask,
               bitvec const& route_mask,
-              bitvec const& transfer_mask,
-              bool use_start_footpaths);
+              bitvec const& transfer_mask);
 
     void route();
     mc_raptor_stats const& get_stats() const;
@@ -67,12 +64,9 @@ private:
   interval<unixtime_t> const search_interval_;
   mc_raptor_stats stats_;
   std::uint32_t n_locations_, n_routes_;
-  std::vector<offset> const start_offsets_;
-  location_match_mode start_match_mode_;
   bitvec const& destination_mask_;
   bitvec const& route_mask_;
   bitvec const& transfer_mask_;
-  bool use_start_footpaths_;
 };
 
 } // namespace nigiri::routing::para

@@ -21,32 +21,25 @@ bool mc_raptor::is_better_or_eq(auto a, auto b) { return a <= b; }
 mc_raptor::mc_raptor(timetable const& tt,
                      mc_raptor_state& state,
                      interval<unixtime_t> const search_interval,
-                     location_match_mode const start_match_mode,
-                     std::vector<offset> const& starts,
                      bitvec const& destination_mask,
                      bitvec const& route_mask,
-                     bitvec const& transfer_mask,
-                     bool use_start_footpaths)
+                     bitvec const& transfer_mask)
     : tt_{tt},
       n_tt_days_{tt_.internal_interval_days().size().count()},
       state_{state},
       search_interval_{search_interval},
       n_locations_{tt_.n_locations()},
       n_routes_{tt.n_routes()},
-      start_offsets_{starts},
-      start_match_mode_{start_match_mode},
       destination_mask_(destination_mask),
       route_mask_(route_mask),
-      transfer_mask_(transfer_mask),
-      use_start_footpaths_(use_start_footpaths){
+      transfer_mask_(transfer_mask) {
   assert(destination_mask.size() == tt_.n_locations());
   assert(transfer_mask.size() == tt_.n_locations());
   assert(route_mask.size() == tt_.n_routes());
   state_.resize(n_locations_,
                 n_routes_,
-                destination_mask_.count());
-  state_.round_bags_.reset(pareto_set<mc_raptor_label>{});
-}
+                static_cast<unsigned int>(destination_mask_.count()));
+  }
 
 mc_raptor_stats const& mc_raptor::get_stats() const { return stats_; }
 
@@ -57,25 +50,23 @@ day_idx_t mc_raptor::start_day_offset() const {
 unsigned mc_raptor::end_k() { return kMaxTransfers + 1U; }
 
 void mc_raptor::route() {
-  std::vector<start> starts;
-
-  get_starts(direction::kForward, tt_, nullptr, search_interval_, start_offsets_,
-             {},{}, kMaxTravelTime, start_match_mode_, use_start_footpaths_, starts, true,
-             kDefaultProfile, {}, route_mask_);
+  /*
   utl::equal_ranges_linear(
-      starts,
-      [](start const& a, start const& b) {
-        return a.time_at_start_ == b.time_at_start_;
-      },
-      [&](auto&& from_it, auto&& to_it) {
-        for (auto const& s : it_range{from_it, to_it}) {
-          state_.round_bags_[0U][to_idx(s.stop_)].add(mc_raptor_label(
-              {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
-          state_.best_[to_idx(s.stop_)].add(mc_raptor_label(
-              {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
-          state_.station_mark_[to_idx(s.stop_)] = true;
-        }
-      });
+    starts_,
+    [](start const& a, start const& b) {
+      return a.time_at_start_ == b.time_at_start_;
+    },
+    [&](auto&& from_it, auto&& to_it) {
+      for (auto const& s : it_range{from_it, to_it}) {
+        state_.round_bags_[0U][to_idx(s.stop_)].add(mc_raptor_label(
+            {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
+        state_.best_[to_idx(s.stop_)].add(mc_raptor_label(
+            {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
+        state_.station_mark_.set(to_idx(s.stop_), true);
+      }
+    }
+  );
+  */
   rounds();
   reconstruct();
   for (auto& r : state_.results_) {
@@ -104,13 +95,13 @@ void mc_raptor::rounds() {
           if (!route_mask_[to_idx(r)]) {
             continue;
           }
-          state_.route_mark_[to_idx(r)] = true;
+          state_.route_mark_.set(to_idx(r), true);
         }
       }
     }
 
     std::swap(state_.prev_station_mark_, state_.station_mark_);
-    std::ranges::fill(state_.station_mark_, false);
+    state_.station_mark_.zero_out();
 
     if (!any_marked) {
       return;
@@ -124,7 +115,7 @@ void mc_raptor::rounds() {
       any_marked |= update_route(k, route_idx_t{r_id});
     }
 
-    std::ranges::fill(state_.route_mark_, false);
+    state_.route_mark_.zero_out();
     if (!any_marked) {
       return;
     }
@@ -185,7 +176,7 @@ bool mc_raptor::update_route(unsigned const k, route_idx_t const route) {
 
       if (!skip && std::get<0>(state_.round_bags_[k][cista::to_idx(l_idx)].add(
               std::forward<mc_raptor_label>(candidate_lbl)))) {
-        state_.station_mark_[l_idx] = true;
+        state_.station_mark_.set(l_idx, true);
         any_marked = true;
       }
     }
@@ -255,7 +246,7 @@ void mc_raptor::update_footpaths(unsigned const k) const {
     for (auto& l : buffered_labels[to_idx(l_idx)]) {
       if (std::get<0>(state_.round_bags_[k][to_idx(l_idx)].add(
               std::forward<mc_raptor_label>(l)))) {
-        state_.station_mark_[to_idx(l_idx)] = true;
+        state_.station_mark_.set(to_idx(l_idx), true);
       }
     }
   }
@@ -325,8 +316,9 @@ void mc_raptor::reconstruct() const {
       continue;
     }
 
-    const auto fastest_direct = get_fastest_direct(location_idx_t{location_idx});
-
+    // const auto fastest_direct =
+    // get_fastest_direct(location_idx_t{location_idx});
+    constexpr auto fastest_direct = duration_t::max();
     for (auto k = 0U; k != end_k(); ++k) {
       auto const& round_bag = state_.round_bags_[k][location_idx];
       if (round_bag.size() == 0) {
@@ -465,12 +457,13 @@ void mc_raptor::reconstruct() const {
           }
           current_label = prev_label;
         }
-        const auto target_after_init_transfer =
-            k == 0 ? location_idx_t{location_idx} : current_label->with_->enter_;
+        //const auto target_after_init_transfer =
+        //   k == 0 ? location_idx_t{location_idx} : current_label->with_->enter_;
 
         if (k > 0) {
           current_label = current_label->prev_;
         }
+        /*
         if (!is_journey_start(target_after_init_transfer)) {
           auto init_fp = find_start_footpath(target_after_init_transfer,
                                              get<1>(current_label->arrival_),
@@ -481,6 +474,7 @@ void mc_raptor::reconstruct() const {
 
           it->add(std::move(*init_fp));
         }
+        */
         std::ranges::reverse(it->legs_);
       }
     }
@@ -517,6 +511,8 @@ interval<stop_idx_t> mc_raptor::find_enter_exit(transport const via,
   }
   return enter_exit;
 }
+
+/*
 
 bool mc_raptor::is_journey_start(location_idx_t const l) const {
   return utl::any_of(start_offsets_, [&](offset const& o) {
@@ -586,6 +582,8 @@ duration_t mc_raptor::get_fastest_direct(location_idx_t const dest) const {
   return std::min(get_fastest_direct_with_foot(dest),
                   get_fastest_start_dest_overlap(dest));
 }
+
+*/
 
 
 } // namespace nigiri::routing::para

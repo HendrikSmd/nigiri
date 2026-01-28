@@ -3,6 +3,8 @@
 #include "boost/thread/pthread/mutex.hpp"
 
 #include "nigiri/routing/raptor/para/route_partition.h"
+#include "nigiri/routing/start_times.h"
+#include "start_times_registry.h"
 
 namespace nigiri::routing::para {
 
@@ -12,34 +14,37 @@ struct customizer {
 
   struct thread_task {
     thread_task(cell_idx_t const cell_idx,
-                location_idx_t const location_idx,
-                cista::base_t<cell_idx_t> const level) :
+                component_idx_t const component_idx,
+                cista::base_t<cell_idx_t> const level,
+                std::vector<start_times_registry::bin_range_t>::const_iterator const iter) :
     cell_idx_(cell_idx),
-    location_idx_(location_idx),
-    level_{level}{}
+    component_idx_(component_idx),
+    level_{level},
+    iter_(iter) {}
 
     cell_idx_t cell_idx_;
-    location_idx_t location_idx_;
+    component_idx_t component_idx_;
     cista::base_t<cell_idx_t> level_;
+    std::vector<start_times_registry::bin_range_t>::const_iterator iter_;
   };
 
   customizer(timetable const& tt);
 
-  route_rank_store construct_route_rank_store(route_partition partition,
-                                              unsigned n_threads);
+  route_rank_store construct_route_rank_store(route_partition partition);
 private:
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
   void initialize_cut_stops();
   void prepare_next_level();
-  void unite_route_masks();
   void initialize_used_transfers();
+  void unite_route_masks();
   void unite_cut_stops();
+  void unite_cut_cmpnts();
   void unite_used_transfers();
   void append_cmpnt_cell_idxs(route_partition const& partition,
                               std::vector<std::vector<cell_idx_t>>& cmpnt_to_cell_idxs);
   void update_cmpnt_cell_idxs_next_level();
-  void cut_stop_routing_task(const thread_task& task);
+  void cut_routing_task(const thread_task& task);
   void update_ranks_for(journey const& j,
                         cista::base_t<cell_idx_t> level,
                         cell_idx_t cell);
@@ -52,8 +57,11 @@ private:
   std::vector<bitvec> route_masks_;
   std::vector<bitvec> transfer_masks_;
   std::vector<bitvec> used_transfers_;
+  std::vector<bitvec> cell_cut_cmpnts_;
   std::vector<bitvec> cell_cut_stops_;
   std::vector<std::vector<cell_idx_t>> cmpnt_to_current_lvl_cell_idxs_;
+
+  start_times_registry start_times_registry_;
 
 
   // Results
