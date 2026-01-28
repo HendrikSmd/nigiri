@@ -478,14 +478,19 @@ void write_final_components(timetable& tt) {
     }
     std::vector<location_idx_t> component_locations;
     std::queue bfs_q(std::deque(1, l));
+
+    tt.location_component_[l] = next_cmpnt_idx;
+    component_locations.emplace_back(l);
+
     while (!bfs_q.empty()) {
       const auto ex_l = bfs_q.front();
       bfs_q.pop();
-      tt.location_component_[ex_l] = next_cmpnt_idx;
-      component_locations.emplace_back(ex_l);
 
       for (const auto& fp_out : tt.locations_.footpaths_out_[kDefaultProfile][ex_l]) {
-        if (tt.location_component_[fp_out.target()] == component_idx_t::invalid()) {
+        auto target_loc = fp_out.target();
+        if (tt.location_component_[target_loc] == component_idx_t::invalid()) {
+          tt.location_component_[target_loc] = next_cmpnt_idx;
+          component_locations.emplace_back(target_loc);
           bfs_q.push(fp_out.target());
         }
       }
