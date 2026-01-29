@@ -47,8 +47,8 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
         ++cell_cut_cmpnt_iter;
       });
     }
-    utl::parallel_for(tasks, [&](auto&& t) {
-      this->cut_routing_task(t);
+    utl::parallel_for_run_threadlocal<mc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
+      this->cut_routing_task(tasks[t_idx], state);
     });
     finished_.store(true);
     logger_thread.join();
@@ -232,7 +232,7 @@ void customizer::unite_cut_cmpnts() {
   binary_or_reduce(cell_cut_cmpnts_);
 }
 
-void customizer::cut_routing_task(const thread_task& task) {
+void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& state) {
   const auto cut_cmpnt_from = task.component_idx_;
   const auto cell = task.cell_idx_;
   const auto level = task.level_;
@@ -241,8 +241,6 @@ void customizer::cut_routing_task(const thread_task& task) {
 
 
   const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
-  mc_raptor_state state{};
-
   for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
     const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[bin_i];
     const auto bin_end_idx = start_times_registry_.bin_start_idxs_[bin_i + 1];
