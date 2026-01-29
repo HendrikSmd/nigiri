@@ -400,10 +400,21 @@ private:
         end_reachable_.set(to_idx(l), true);
       }
     }
+    if constexpr (algo_version == version::kPara) {
+      start_lcls_.resize(n_routes_);
+      dest_lcls_.resize(n_routes_);
+      for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
+        auto const& r_store = *rank_store_;
+        auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
+        auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
+        start_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_start);
+        dest_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_dest);
+      }
+    }
   }
 
-  static route_rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
-    return route_rank_t{g_cell.level + static_cast<uint16_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
+  static rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
+    return rank_t{g_cell.level + static_cast<uint16_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
   }
 
   date::sys_days base() const {
@@ -452,11 +463,10 @@ private:
 
       if constexpr (algo_version == version::kPara) {
         auto const& r_store = *rank_store_;
-        auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
-        auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
-        auto route_rank = r_store.route_ranks_[r];
-        if (route_rank < lcl(r_store.partition_.route_to_cell_idx_[r], g_cell_start) &&
-            route_rank < lcl(r_store.partition_.route_to_cell_idx_[r], g_cell_dest)) {
+        const auto [r_from, _] = r_store.route_rank_ranges_[r];
+        if (auto const route_rank = r_store.ranks_[r_from];
+            route_rank < start_lcls_[to_idx(r)] &&
+            route_rank < dest_lcls_[to_idx(r)]) {
           stats_.n_route_scan_pruned_by_para++;
           return;
         }
@@ -996,6 +1006,10 @@ private:
     auto et = std::array<transport, Vias + 1>{};
     auto v_offset = std::array<std::size_t, Vias + 1>{};
 
+    std::uint32_t r_ranks_from = 0U;
+    if constexpr (algo_version == version::kPara) {
+      r_ranks_from = rank_store_->route_rank_ranges_[r].from_;
+    }
     for (auto i = 0U; i != stop_seq.size(); ++i) {
       auto const stop_idx =
           static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
@@ -1019,6 +1033,19 @@ private:
               k, v, stop_idx, loc{tt_, location_idx_t{l_idx}});
           continue;
         }
+        /*
+        if constexpr (algo_version == version::kPara) {
+          if (auto transfer_rank =
+                  rank_store_->ranks_[r_ranks_from + (i * 2)];
+              transfer_rank < start_lcls_[to_idx(r)] &&
+              transfer_rank < dest_lcls_[to_idx(r)]) {
+            stats_.n_route_scan_pruned_by_para++;
+            break;
+              }
+        }
+        */
+
+
 
         trace(
             "┊ │k={} v={}(+{})  stop_idx={}, location={}, round_times={}, "
@@ -1144,6 +1171,16 @@ private:
 
       if (lb_[l_idx] == kUnreachable) {
         break;
+      }
+
+      if constexpr (algo_version == version::kPara) {
+        if (auto transfer_rank =
+                rank_store_->ranks_[r_ranks_from + (1 + (i * 2))];
+            transfer_rank < start_lcls_[to_idx(r)] &&
+            transfer_rank < dest_lcls_[to_idx(r)]) {
+          stats_.n_route_scan_pruned_by_para++;
+          continue;
+            }
       }
 
       for (auto v = 0U; v != Vias + 1; ++v) {
@@ -1362,7 +1399,9 @@ private:
   bool require_car_transport_;
   bool is_wheelchair_;
   transfer_time_settings transfer_time_settings_;
+
   std::pair<component_idx_t, component_idx_t> start_dest_cmpnt_;
+  std::vector<rank_t> start_lcls_, dest_lcls_;
   para::route_rank_store const* rank_store_;
 };
 

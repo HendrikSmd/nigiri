@@ -60,18 +60,8 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     }
   }
 
-  std::vector<size_t> route_rank_counts(partition.n_levels_ + 1, 0U);
-  for (auto r = route_idx_t{0U}; r < tt_.n_routes(); ++r) {
-    route_rank_counts[to_idx(route_ranks_[r])]++;
-  }
-
-  std::cout << "Final route rank distribution:" << std::endl;
-  for (cista::base_t<cell_idx_t> level = 0U; level <= partition.n_levels_; ++level) {
-    std::cout << "Level " << level << ": " << route_rank_counts[level] << "/" << tt_.n_routes() << std::endl;
-  }
-
-  return route_rank_store(std::move(route_ranks_),
-                          std::move(transport_ranks_),
+  return route_rank_store(std::move(route_rank_ranges_),
+                          std::move(ranks_),
                           std::move(partition));
 }
 
@@ -81,6 +71,21 @@ void customizer::log_progress() const {
       std::cout << "Cell " << cell_idx << ": " << cell_progress_[cista::to_idx(cell_idx)] << "/" << cell_cut_cmpnts_[cista::to_idx(cell_idx)].count() << std::endl;
     }
     std::cout << std::endl;
+}
+
+void customizer::initialize_ranks() {
+  ranks_.clear();
+  route_rank_ranges_.clear();
+
+  for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
+    const auto route_range_begin = ranks_.size();
+    const auto n_stops = tt_.route_location_seq_[route_idx].size();
+    const auto n_route_rank_entries = 1 + ((2 * n_stops) - 2);
+    const auto route_range_end = route_range_begin + n_route_rank_entries;
+
+    route_rank_ranges_.emplace_back(route_range_begin, route_range_end);
+    ranks_.resize(ranks_.size() + n_route_rank_entries, rank_t{0U});
+  }
 }
 
 void customizer::initialize(route_partition const& p) {
@@ -102,9 +107,6 @@ void customizer::initialize(route_partition const& p) {
   cmpnt_to_current_lvl_cell_idxs_.clear();
   start_times_registry_.clear();
 
-  route_ranks_.clear();
-  transport_ranks_.clear();
-
   updated_routes_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_routes()});
   route_masks_.resize(n_of_cells_on_first_lvl, bitvec{tt_.n_routes()});
   transfer_masks_.resize(n_of_cells_on_first_lvl, bitvec::max(tt_.n_locations()));
@@ -113,8 +115,7 @@ void customizer::initialize(route_partition const& p) {
   cell_cut_cmpnts_.resize(n_of_cells_on_first_lvl, bitvec{tt_.component_locations_.size()});
 
 
-  route_ranks_.resize(tt_.n_routes(), route_rank_t{0U});
-  transport_ranks_.resize(tt_.transport_route_.size(), transport_rank_t{0U}); // this is a little bit dirty
+  initialize_ranks();
 
   initialize_route_masks(p);
   append_cmpnt_cell_idxs(p, cmpnt_to_current_lvl_cell_idxs_);
@@ -392,9 +393,13 @@ void customizer::update_ranks_for(journey const& j,
       // make sure our journey does not contain a leg that
       // uses a route we masked out
       assert(route_masks_[to_idx(cell)][to_idx(route_idx)]);
-
-      route_ranks_[route_idx] = route_rank_t{level + 1};
-      transport_ranks_[transport_idx] = transport_rank_t{level + 1};
+      auto const [from, _] = route_rank_ranges_[route_idx];
+      auto const [from_stop, to_stop_exclusive] = run.stop_range_;
+      const unsigned dep_route_rank_off = 1 + (from_stop * 2);
+      const unsigned arr_route_rank_off = ((to_stop_exclusive-1) * 2);
+      ranks_[from] = rank_t{level + 1};
+      ranks_[from + dep_route_rank_off] = rank_t{level + 1};
+      ranks_[from + arr_route_rank_off] = rank_t{level + 1};
 
       // mark route as updated for the next level
       updated_routes_[to_idx(cell)].set(to_idx(route_idx), true);
@@ -406,15 +411,15 @@ void customizer::update_ranks_for(journey const& j,
 
 
 
-route_rank_store::route_rank_store(vector_map<route_idx_t, route_rank_t>&& route_ranks,
-                                   vector_map<transport_idx_t, transport_rank_t>&& transport_ranks,
+route_rank_store::route_rank_store(vector_map<route_idx_t, interval<std::uint32_t>>&& route_rank_ranges,
+                                   vector<rank_t>&& ranks,
                                    route_partition&& p) :
-  route_ranks_(std::move(route_ranks)),
-  transport_ranks_(std::move(transport_ranks)),
+  route_rank_ranges_(std::move(route_rank_ranges)),
+  ranks_(std::move(ranks)),
   partition_(std::move(p)) {}
 
 auto route_rank_store::cista_members() {
-  return std::tie(route_ranks_, transport_ranks_, partition_);
+  return std::tie(route_rank_ranges_, ranks_, partition_);
 }
 
 void route_rank_store::write(std::filesystem::path const& path) const {
@@ -423,22 +428,24 @@ void route_rank_store::write(std::filesystem::path const& path) const {
 
 void route_rank_store::print_summary(std::ostream&) const {
   std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
-  std::vector<size_t> transport_rank_counts(partition_.n_levels_ + 1, 0ULL);
+  std::vector<size_t> transfer_rank_counts(partition_.n_levels_ + 1, 0ULL);
 
-  auto const n_routes = route_ranks_.size();
+  auto const n_routes = route_rank_ranges_.size();
   for (auto r = route_idx_t{0}; r < n_routes; ++r) {
-    route_rank_counts[to_idx(route_ranks_[r])]++;
+    const auto [r_from, r_to] = route_rank_ranges_[r];
+    route_rank_counts[to_idx(ranks_[r_from])]++;
+
+    for (auto r_rank_idx = r_from + 1; r_rank_idx < r_to; ++r_rank_idx) {
+      transfer_rank_counts[to_idx(ranks_[r_rank_idx])]++;
+    }
   }
 
-  auto const n_transports = transport_ranks_.size();
-  for (auto t = transport_idx_t{0}; t < n_transports; ++t) {
-    transport_rank_counts[to_idx(transport_ranks_[t])]++;
-  }
+  const auto n_transfers = ranks_.size() - route_rank_ranges_.size();
 
   std::cout << "Counts per rank: " << std::endl;
   for (size_t rank = 0U; rank <= partition_.n_levels_; ++rank) {
     std::cout << "  rank=" << std::left << std::setw(10) << rank << ": " << route_rank_counts[rank] << "/" << n_routes << " routes, "
-    << transport_rank_counts[rank] << "/" << n_transports << " transports" << std::endl;
+    << transfer_rank_counts[rank] << "/" << n_transfers << " transfers" << std::endl;
   }
 }
 

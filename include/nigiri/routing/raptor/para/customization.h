@@ -4,6 +4,8 @@
 
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/routing/start_times.h"
+
+#include "mc_raptor_state.h"
 #include "start_times_registry.h"
 
 namespace nigiri::routing::para {
@@ -35,6 +37,7 @@ private:
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
   void initialize_cut_stops();
+  void initialize_ranks();
   void prepare_next_level();
   void initialize_used_transfers();
   void unite_route_masks();
@@ -44,7 +47,7 @@ private:
   void append_cmpnt_cell_idxs(route_partition const& partition,
                               std::vector<std::vector<cell_idx_t>>& cmpnt_to_cell_idxs);
   void update_cmpnt_cell_idxs_next_level();
-  void cut_routing_task(const thread_task& task);
+  void cut_routing_task(const thread_task& task, mc_raptor_state& state);
   void update_ranks_for(journey const& j,
                         cista::base_t<cell_idx_t> level,
                         cell_idx_t cell);
@@ -65,8 +68,9 @@ private:
 
 
   // Results
-  vector_map<route_idx_t, route_rank_t> route_ranks_;
-  vector_map<transport_idx_t, transport_rank_t> transport_ranks_;
+  vector_map<route_idx_t, interval<std::uint32_t>> route_rank_ranges_;
+  vector<rank_t> ranks_;
+
 
   // Threads
   std::deque<std::mutex> cell_mutexes_;
@@ -79,8 +83,8 @@ private:
 
 struct route_rank_store {
   route_rank_store() = default;
-  explicit route_rank_store(vector_map<route_idx_t, route_rank_t>&& route_ranks,
-                            vector_map<transport_idx_t, transport_rank_t>&& transport_ranks,
+  explicit route_rank_store(vector_map<route_idx_t, interval<std::uint32_t>>&& route_rank_ranges,
+                            vector<rank_t>&& ranks,
                             route_partition&& p);
 
   auto                                          cista_members();
@@ -89,8 +93,8 @@ struct route_rank_store {
   void                                          write(std::filesystem::path const&) const;
   void                                          print_summary(std::ostream&) const;
 
-  vector_map<route_idx_t, route_rank_t> route_ranks_;
-  vector_map<transport_idx_t, transport_rank_t> transport_ranks_;
+  vector_map<route_idx_t, interval<std::uint32_t>> route_rank_ranges_;
+  vector<rank_t> ranks_;
   route_partition partition_;
 };
 
