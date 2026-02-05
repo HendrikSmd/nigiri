@@ -62,9 +62,9 @@ struct mc_raptor_label {
                 departure_ == other.departure_;
   }
 
-  inline bool dominates(const mc_raptor_label& other) const noexcept {
-        return  get<1>(arrival_) <= get<0>(other.arrival_) &&
-                departure_ >= other.departure_;
+  static bool dominates(const mc_raptor_label& l1, const mc_raptor_label& l2) noexcept {
+        return  get<1>(l1.arrival_) <= get<0>(l2.arrival_) &&
+                l1.departure_ >= l2.departure_;
   }
 
   std::tuple<routing_time, routing_time> arrival_;
@@ -96,9 +96,9 @@ struct mc_raptor_route_label {
                transport_.day_ == other.transport_.day_;
   }
 
-  bool dominates(const mc_raptor_route_label& other) const noexcept {
-        return  departure_ >= other.departure_ &&
-               (transport_.day_ < other.transport_.day_ || (transport_.day_ == other.transport_.day_ && transport_.t_idx_ <= other.transport_.t_idx_));
+  static bool dominates(const mc_raptor_route_label& l1, const mc_raptor_route_label& l2) noexcept {
+        return  l1.departure_ >= l2.departure_ &&
+               (l1.transport_.day_ < l2.transport_.day_ || (l1.transport_.day_ == l2.transport_.day_ && l1.transport_.t_idx_ <= l2.transport_.t_idx_));
   }
 
   transport transport_;
@@ -107,6 +107,8 @@ struct mc_raptor_route_label {
 
   pareto_set<mc_raptor_label>::const_iterator prev_;
 };
+
+using journey_with_label = std::pair<journey, mc_raptor_label>;
 
 struct mc_raptor_state {
   mc_raptor_state() = default;

@@ -88,10 +88,10 @@ void mc_raptor::rounds() {
 
       if (state_.station_mark_[to_idx(l_idx)]) {
         for (auto& l : state_.round_bags_[k - 1][to_idx(l_idx)]) {
-          state_.best_[to_idx(l_idx)].add(std::forward<mc_raptor_label>(l));
+          state_.best_[to_idx(l_idx)].add(l);
         }
         any_marked = true;
-        for (auto const& r : tt_.location_routes_[l_idx]) {
+        for (auto const r : tt_.location_routes_[l_idx]) {
           if (!route_mask_[to_idx(r)]) {
             continue;
           }
@@ -167,15 +167,14 @@ bool mc_raptor::update_route(unsigned const k, route_idx_t const route) {
 
       bool skip = false;
       for (const auto& el : state_.best_[l_idx]) {
-        if (el.dominates(candidate_lbl)) {
+        if (mc_raptor_label::dominates(el, candidate_lbl)) {
           skip = true;
           break;
         }
       }
 
 
-      if (!skip && std::get<0>(state_.round_bags_[k][cista::to_idx(l_idx)].add(
-              std::forward<mc_raptor_label>(candidate_lbl)))) {
+      if (!skip && std::get<0>(state_.round_bags_[k][cista::to_idx(l_idx)].add(candidate_lbl))) {
         state_.station_mark_.set(l_idx, true);
         any_marked = true;
       }
@@ -226,7 +225,7 @@ void mc_raptor::update_footpaths(unsigned const k) const {
 
         bool skip = false;
         for (const auto& el : state_.best_[target]) {
-          if (el.dominates(l_with_foot)) {
+          if (mc_raptor_label::dominates(el, l_with_foot)) {
             skip = true;
             break;
           }
@@ -244,8 +243,7 @@ void mc_raptor::update_footpaths(unsigned const k) const {
 
   for (auto l_idx = location_idx_t{0U}; l_idx != tt_.n_locations(); ++l_idx) {
     for (auto& l : buffered_labels[to_idx(l_idx)]) {
-      if (std::get<0>(state_.round_bags_[k][to_idx(l_idx)].add(
-              std::forward<mc_raptor_label>(l)))) {
+      if (std::get<0>(state_.round_bags_[k][to_idx(l_idx)].add(std::move(l)))) {
         state_.station_mark_.set(to_idx(l_idx), true);
       }
     }
@@ -478,7 +476,6 @@ void mc_raptor::reconstruct() const {
         std::ranges::reverse(it->legs_);
       }
     }
-    ++w_idx;
   }
 }
 

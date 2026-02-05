@@ -1,28 +1,9 @@
 #include "nigiri/routing/raptor/para/mc_raptor_state.h"
 
+#include "nigiri/common/clear_all.h"
 #include "nigiri/routing/limits.h"
 
-#include <concepts>
-#include <iterator>
-
 namespace nigiri::routing::para {
-
-template<typename T>
-concept Clearable = requires(T a) {
-  a.clear();
-};
-
-/**
- * Iterates through a range and calls .clear() on every element.
- */
-template<std::input_iterator It>
-void clear_all(It first, It last) {
-  for (; first != last; ++first) {
-    if constexpr (Clearable<std::iter_value_t<It>>) {
-      first->clear();
-    }
-  }
-}
 
 void mc_raptor_state::resize(unsigned const n_locations,
                              unsigned const n_routes,

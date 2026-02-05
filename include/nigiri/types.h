@@ -61,6 +61,9 @@ using bitset = cista::bitset<Size>;
 constexpr auto const kMaxDays = 512;
 using bitfield = bitset<kMaxDays>;
 
+constexpr auto const kMaxSearchDays = 64;
+using search_bitfield = bitset<kMaxSearchDays>;
+
 using bitvec = cista::raw::bitvec;
 
 template <typename K = std::uint32_t>
@@ -660,6 +663,13 @@ struct booking_rule {
   translation_idx_t info_url_;
   translation_idx_t booking_url_;
 };
+
+template <std::size_t Size_1, std::size_t Size_2>
+void truncate_to(const cista::bitset<Size_1>& bitset_1, cista::bitset<Size_2>& bitset_2) {
+  for (auto i = 0U; i<bitset_2.blocks_.size(); ++i) {
+    bitset_2.blocks_[i] = bitset_1.blocks_[i];
+  }
+}
 
 }  // namespace nigiri
 

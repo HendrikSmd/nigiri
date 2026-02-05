@@ -84,6 +84,10 @@ struct journey {
     }
   }
 
+  static bool dominates(journey const& j1, journey const& j2) {
+    return j1.dominates(j2);
+  }
+
   void add(leg&& l) { legs_.emplace_back(l); }
 
   duration_t travel_time() const {

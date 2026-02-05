@@ -34,6 +34,10 @@ struct entry {
            segment_offset_ <= o.segment_offset_;
   }
 
+  static bool dominates(entry const& e1, entry const& e2) {
+    return e1.dominates(e2);
+  }
+
   transport_t transport_;
   std::uint16_t segment_offset_ : 12;
   std::uint16_t k_ : 4;
