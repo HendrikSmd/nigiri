@@ -8,6 +8,11 @@
 
 namespace nigiri::routing::para {
 
+bool relative_journey::dominates(relative_journey const& j1,
+                                 relative_journey const& j2) {
+  return j1.departure_ >= j2.departure_ && j1.arrival_ <= j2.arrival_ && j1.transfers_ <= j2.transfers_;
+}
+
 bmc_raptor::bmc_raptor(timetable const& tt,
                        bmc_raptor_state& state,
                        bitvec const& destination_mask,
@@ -18,7 +23,11 @@ bmc_raptor::bmc_raptor(timetable const& tt,
     destination_mask_(destination_mask),
     route_mask_(route_mask),
     transfer_mask_(transfer_mask),
-    tt_day_mask_(get_tt_day_mask(tt)) {};
+    tt_day_mask_(get_tt_day_mask(tt)) {
+    state_.resize(tt.n_locations(),
+                  tt.n_routes(),
+                  static_cast<unsigned int>(destination_mask_.count()));
+    };
 
 bitset<kMaxDays> bmc_raptor::get_tt_day_mask(timetable const& tt) {
   const auto n_days_in_tt = tt.day_idx_mam(tt.internal_interval().to_ - 1_minutes).first
@@ -124,14 +133,15 @@ void bmc_raptor::init_location_with_offset(location_idx_t const location_idx,
           bool added = add_to_non_dest_round_bag(
             state_.round_bags_[0U][to_idx(location_idx)],
             {
-              .route_idx = 0U,
-              .enter_stop_idx = 0U,
+              .route_idx_ = 0U,
+              .enter_stop_idx_ = 0U,
+              .exit_stop_idx_ = 0U,
               .arrival_ = static_cast<uint16_t>(normalized_start_time_mam + minutes_to_arrive.count()),
-              .parent_bag_idx = 0U,
+              .parent_bag_idx_ = 0U,
               .arrival_with_transfer_ = static_cast<uint16_t>(normalized_start_time_mam + minutes_to_arrive.count()),
               .departure_ = static_cast<uint16_t>(normalized_start_time_mam),
-              .is_footpath = static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0),
-              .has_parent = 0
+              .is_footpath_ = static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0),
+              .has_parent_ = 0
             },
             label_bf);
           if (added) {
@@ -220,9 +230,9 @@ void bmc_raptor::get_earliest_sufficient_transports(std::uint32_t const bag_idx,
           route_bag,
           {
             .transport_idx_ = transport.v_,
-            .enter_stop_idx = stop_idx,
+            .enter_stop_idx_ = stop_idx,
             .transport_day_offset_ = static_cast<int16_t>(net_shift_right),
-            .parent_bag_idx = bag_idx,
+            .parent_bag_idx_ = bag_idx,
             .departure_ = label.departure_,
           },
           matches
@@ -239,7 +249,7 @@ void bmc_raptor::update_footpaths(unsigned const k) {
     const location_idx_t l_idx{i};
     const auto& fps = tt_.locations_.footpaths_out_[kDefaultProfile][l_idx];
     for (const auto& rl : round_bag) {
-      if (rl.label_.is_footpath == 1) {
+      if (rl.label_.is_footpath_ == 1) {
         continue;
       }
 
@@ -261,14 +271,15 @@ void bmc_raptor::update_footpaths(unsigned const k) {
         }
 
         const bmc_raptor_label label_with_foot {
-          .route_idx = rl.label_.route_idx,
-          .enter_stop_idx = rl.label_.enter_stop_idx,
+          .route_idx_ = rl.label_.route_idx_,
+          .enter_stop_idx_ = rl.label_.enter_stop_idx_,
+          .exit_stop_idx_ = rl.label_.exit_stop_idx_,
           .arrival_ = arr_with_foot,
-          .parent_bag_idx = rl.label_.parent_bag_idx,
+          .parent_bag_idx_ = rl.label_.parent_bag_idx_,
           .arrival_with_transfer_ = arr_with_foot,
           .departure_ = dep,
-          .is_footpath = 1,
-          .has_parent = rl.label_.has_parent,
+          .is_footpath_ = 1,
+          .has_parent_ = rl.label_.has_parent_,
         };
 
         auto tdb = rl.tdb_;
@@ -342,14 +353,15 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
       }
 
       const auto candidate_lbl = bmc_raptor_label{
-        .route_idx = to_idx(route_idx),
-        .enter_stop_idx = active_label.label_.enter_stop_idx,
+        .route_idx_ = to_idx(route_idx),
+        .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
+        .exit_stop_idx_ = stop_idx,
         .arrival_ = static_cast<uint16_t>(new_arr),
-        .parent_bag_idx = active_label.label_.parent_bag_idx,
+        .parent_bag_idx_ = active_label.label_.parent_bag_idx_,
         .arrival_with_transfer_ = static_cast<uint16_t>(new_arr + transfer_time_offset),
         .departure_ = static_cast<uint16_t>(active_label.label_.departure_),
-        .is_footpath = 0,
-        .has_parent = 1
+        .is_footpath_ = 0,
+        .has_parent_ = 1
       };
 
       auto candidate_tdb = active_label.tdb_;
@@ -486,5 +498,29 @@ void bmc_raptor::gather_journeys() {
 }
 
 unsigned bmc_raptor::end_k() { return kMaxTransfers + 1U; }
+
+void bmc_raptor::emplace_relative_journeys_for(location_idx_t loc_idx, bmc_raptor_bag<relative_journey>& bag) {
+  constexpr auto dom = [](relative_journey const& l1, relative_journey const& l2) {
+    return relative_journey::dominates(l1, l2);
+  };
+
+  for (auto k = 1U; k != end_k(); ++k) {
+    auto const& round_bag = state_.round_bags_[k][to_idx(loc_idx)];
+    if (round_bag.size() == 0) {
+      continue;
+    }
+
+    for (auto label_it = round_bag.begin(); label_it != round_bag.end(); ++label_it) {
+      bag.add<dom>(
+        {
+          .arrival_ = label_it->label_.arrival_,
+          .departure_ = label_it->label_.departure_,
+          .transfers_ = static_cast<std::uint16_t>(k - 1),
+          .label_iter_ = label_it
+        },
+        label_it->tdb_);
+    }
+  }
+}
 
 } // nigiri::routing::raptor::para

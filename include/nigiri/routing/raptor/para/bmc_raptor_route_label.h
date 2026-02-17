@@ -11,11 +11,11 @@ struct bmc_raptor_route_label {
 
   // --- Block 1: 64 bits (8 bytes) ---
   std::uint32_t transport_idx_;              // 32 bits
-  std::uint16_t enter_stop_idx;              // 16 bits
+  std::uint16_t enter_stop_idx_;              // 16 bits
   std::int16_t  transport_day_offset_;       // 16 bits
 
   // --- Block 2: 48 bits (6 bytes) ---
-  std::uint32_t parent_bag_idx;              // 32 bits
+  std::uint32_t parent_bag_idx_;              // 32 bits
   std::uint16_t departure_;                  // 16 bits
   // 2 Bytes Padding
 };

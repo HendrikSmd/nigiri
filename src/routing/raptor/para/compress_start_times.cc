@@ -19,12 +19,12 @@ bool try_push_to_bin(std::vector<std::vector<duration_t>> const& fp_matrix,
       continue;
     }
 
-    if (fp_matrix[cista::to_idx(emplaced_event.dep_loc_)][cista::to_idx(event.fin_dep_loc_)] == duration_t::max()) {
+    if (fp_matrix[cista::to_idx(emplaced_event.dep_loc_)][cista::to_idx(event.dep_loc_)] == duration_t::max()) {
       return false;
     }
 
-    if (event.dep_time_ + event.transfer_duration_ -
-        fp_matrix[cista::to_idx(emplaced_event.dep_loc_)][cista::to_idx(event.fin_dep_loc_)] < emplaced_event.dep_time_) {
+    if (event.dep_time_  -
+        fp_matrix[cista::to_idx(emplaced_event.dep_loc_)][cista::to_idx(event.dep_loc_)] < emplaced_event.dep_time_) {
       return false;
     }
   }

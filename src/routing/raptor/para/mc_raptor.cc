@@ -476,6 +476,7 @@ void mc_raptor::reconstruct() const {
         std::ranges::reverse(it->legs_);
       }
     }
+    w_idx++;
   }
 }
 

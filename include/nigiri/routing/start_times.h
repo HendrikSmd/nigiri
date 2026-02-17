@@ -26,13 +26,13 @@ struct start {
 
 struct cmpnt_dep_event {
   unixtime_t dep_time_;
-  duration_t transfer_duration_;
   cmpnt_loc_idx_t dep_loc_;
-  cmpnt_loc_idx_t fin_dep_loc_;
 
   bool operator<(const cmpnt_dep_event& rhs) const;
 
 };
+
+
 
 void get_cmpnt_dep_events(
   timetable const& tt,

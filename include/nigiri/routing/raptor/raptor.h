@@ -460,7 +460,7 @@ private:
           section_car_filter = true;
         }
       }
-
+      /*
       if constexpr (algo_version == version::kPara) {
         auto const& r_store = *rank_store_;
         const auto [r_from, _] = r_store.route_rank_ranges_[r];
@@ -471,7 +471,7 @@ private:
           return;
         }
       }
-
+      */
       ++stats_.n_routes_visited_;
       trace("┊ ├k={} updating route {}\n", k, r);
       any_marked |=

@@ -5,6 +5,16 @@
 
 namespace nigiri::routing::para {
 
+struct relative_journey {
+
+  static bool dominates(relative_journey const& j1, relative_journey const& j2);
+
+  std::uint16_t arrival_;
+  std::uint16_t departure_;
+  std::uint16_t transfers_;
+  bmc_raptor_bag_t::const_iterator label_iter_;
+};
+
 struct bmc_raptor {
 
   bmc_raptor(timetable const& tt,
@@ -40,6 +50,9 @@ struct bmc_raptor {
   void rounds();
   void gather_journeys();
   static unsigned end_k();
+
+
+  void emplace_relative_journeys_for(location_idx_t location_idx, bmc_raptor_bag<relative_journey>& bag);
 
 
 

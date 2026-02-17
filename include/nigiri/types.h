@@ -98,6 +98,9 @@ using cista::holds_alternative;
 template <typename K, typename V, typename SizeType = cista::base_t<K>>
 using vecvec = cista::raw::vecvec<K, V, SizeType>;
 
+template <typename T>
+using std_vecvec = std::vector<std::vector<T>>;
+
 template <typename K,
           typename V,
           std::size_t N,

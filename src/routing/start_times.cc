@@ -64,14 +64,9 @@ void get_departure_events_at_stop(timetable const& tt,
           iv.contains(tt.to_unixtime(day, stop_time_mam))) {
         auto const ev_time = tt.to_unixtime(day, stop_time_mam);
 
-        if (!iv.contains(ev_time)) {
-          continue;
-        }
         departure_events.emplace_back(cmpnt_dep_event{.dep_time_ = ev_time,
-                                                      .transfer_duration_ = 0_minutes,
-                                                      .dep_loc_ = location_idx,
-                                                      .fin_dep_loc_ = location_idx});
-          }
+                                                      .dep_loc_ = location_idx});
+      }
     }
   }
 }

@@ -10,6 +10,7 @@
 
 #include "nigiri/routing/raptor/para/mc_raptor.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
+#include "nigiri/routing/raptor/para/bmc_raptor.h"
 
 
 namespace nigiri::routing::para {
@@ -40,14 +41,14 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     });
 
     std::vector<thread_task> tasks;
-    auto cell_cut_cmpnt_iter = start_times_registry_.cell_cmpnt_search_bins_.cbegin();
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(level); ++cell_idx) {
+      auto cut_cmpnt_bin_range_iter = start_times_registry_.cell_cmpnt_search_bins_[to_idx(cell_idx)].cbegin();
       cell_cut_cmpnts_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
-        tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cell_cut_cmpnt_iter);
-        ++cell_cut_cmpnt_iter;
+        tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cut_cmpnt_bin_range_iter);
+        ++cut_cmpnt_bin_range_iter;
       });
     }
-    utl::parallel_for_run_threadlocal<mc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
+    utl::parallel_for_run_threadlocal<bmc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
       this->cut_routing_task(tasks[t_idx], state);
     });
     finished_.store(true);
@@ -124,7 +125,7 @@ void customizer::initialize(route_partition const& p) {
   initialize_cut_stops();
   // must happen after cut stops have been initialized
   initialize_used_transfers();
-  start_times_registry_.populate(tt_, n_of_cells_on_first_lvl,
+  start_times_registry_.populate(bin_grouping_strategy::SQUASHED, tt_, n_of_cells_on_first_lvl,
                                  cmpnt_to_current_lvl_cell_idxs_,
                                  route_masks_);
 }
@@ -199,8 +200,7 @@ void customizer::prepare_next_level() {
   std::swap(transfer_masks_, used_transfers_);
   initialize_used_transfers();
 
-  start_times_registry_.clear();
-  start_times_registry_.populate(tt_, n_cells_in_next_level, cmpnt_to_current_lvl_cell_idxs_, route_masks_);
+  start_times_registry_.populate(bin_grouping_strategy::SQUASHED, tt_, n_cells_in_next_level, cmpnt_to_current_lvl_cell_idxs_, route_masks_);
 
   std::ranges::fill(cell_progress_, 0U);
 }
@@ -233,6 +233,137 @@ void customizer::unite_cut_cmpnts() {
   binary_or_reduce(cell_cut_cmpnts_);
 }
 
+void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc_state) {
+  const auto cut_cmpnt_from = task.component_idx_;
+  const auto cell = task.cell_idx_;
+  const auto level = task.level_;
+
+  const auto [bin_from, bin_to] = *task.iter_;
+
+  const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
+  for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
+    const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i];
+    const auto bin_end_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i + 1];
+    bmc_raptor raptor{tt_,
+                      bmc_state,
+                      cell_cut_stops_[to_idx(cell)],
+                      route_masks_[to_idx(cell)],
+                      transfer_masks_[to_idx(cell)]};
+
+    for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
+      const auto& rel_dep_event = start_times_registry_.rel_dep_events_buffer_[to_idx(cell)][dep_event_i];
+      const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
+
+      search_bitfield sbf;
+      truncate_to(rel_dep_event.active_days_, sbf);
+
+      bool added = bmc_raptor::add_to_non_dest_round_bag(
+        bmc_state.round_bags_[0U][to_idx(from_loc)],
+        {
+          .route_idx_ = 0U,
+          .enter_stop_idx_ = 0U,
+          .exit_stop_idx_ = 0U,
+          .arrival_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+          .parent_bag_idx_ = 0U,
+          .arrival_with_transfer_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+          .departure_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+          .is_footpath_ = 0,
+          .has_parent_ = 0
+        }, sbf);
+      if (added) {
+        bmc_raptor::add_to_non_dest_round_bag(
+          bmc_state.best_bags_[to_idx(from_loc)],
+          {
+            .route_idx_ = 0U,
+            .enter_stop_idx_ = 0U,
+            .exit_stop_idx_ = 0U,
+            .arrival_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+            .parent_bag_idx_ = 0U,
+            .arrival_with_transfer_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+            .departure_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
+            .is_footpath_ = 0,
+            .has_parent_ = 0
+          }, sbf);
+        bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
+      }
+    }
+
+    raptor.rounds();
+    std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
+
+    bmc_raptor_bag<relative_journey> rel_journey_bag;
+    cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
+      raptor.emplace_relative_journeys_for(location_idx_t{i}, rel_journey_bag);
+
+      for (const auto& rel_j : rel_journey_bag) {
+        backtrack_and_update_ranks(rel_j.label_.label_iter_,
+                                   bmc_state,
+                                   rel_j.label_.transfers_ + 1,
+                                   location_idx_t{i},
+                                   level,
+                                   cell);
+      }
+
+      rel_journey_bag.clear();
+    });
+
+    bmc_state.reset();
+  }
+  std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
+  cell_progress_[to_idx(cell)]++;
+}
+
+void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
+                                            bmc_raptor_state const& state,
+                                            const unsigned k,
+                                            location_idx_t const target,
+                                            cista::base_t<cell_idx_t> const level,
+                                            cell_idx_t const cell) {
+  auto& used_transfers_bv = used_transfers_[to_idx(cell)];
+
+  auto current_label = *root_label;
+  auto current_k = k;
+  auto target_loc = target;
+
+  while (current_label.label_.has_parent_ == 1U) {
+
+    const auto route_idx = current_label.label_.route_idx_;
+
+    const auto& stop_sequence = tt_.route_location_seq_[route_idx_t{route_idx}];
+
+    auto const enter_stop_idx = current_label.label_.enter_stop_idx_;
+    auto const exit_stop_idx = current_label.label_.exit_stop_idx_;
+
+    auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
+    auto const exit_stp = stop{stop_sequence[exit_stop_idx]};
+
+    auto const enter_loc_idx = cista::to_idx(enter_stp.location_idx());
+    auto const exit_loc_idx = cista::to_idx(exit_stp.location_idx());
+
+    used_transfers_bv.set(enter_loc_idx, true);
+    used_transfers_bv.set(exit_loc_idx, true);
+    used_transfers_bv.set(to_idx(target_loc), true);
+
+    if (route_idx != route_idx_t::invalid().v_) {
+      auto const [from, _] = route_rank_ranges_[route_idx_t{route_idx}];
+      const unsigned dep_route_rank_off = 1 + (enter_stop_idx * 2);
+      const unsigned arr_route_rank_off = (exit_stop_idx * 2);
+      ranks_[from] = rank_t{level + 1};
+      ranks_[from + dep_route_rank_off] = rank_t{level + 1};
+      ranks_[from + arr_route_rank_off] = rank_t{level + 1};
+
+      // mark route as updated for the next level
+      updated_routes_[to_idx(cell)].set(route_idx, true);
+    }
+
+    current_label = state.round_bags_[current_k - 1][enter_loc_idx].labels_[current_label.label_.parent_bag_idx_];
+    current_k--;
+    target_loc = location_idx_t{enter_loc_idx};
+  }
+
+
+}
+
 void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& state) {
   const auto cut_cmpnt_from = task.component_idx_;
   const auto cell = task.cell_idx_;
@@ -243,8 +374,8 @@ void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& stat
 
   const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
   for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
-    const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[bin_i];
-    const auto bin_end_idx = start_times_registry_.bin_start_idxs_[bin_i + 1];
+    const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i];
+    const auto bin_end_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i + 1];
     mc_raptor raptor{tt_,
                      state,
                      tt_.internal_interval(),
@@ -253,17 +384,19 @@ void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& stat
                      transfer_masks_[to_idx(cell)]};
 
     for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
-      const auto& dep_event = start_times_registry_.dep_events_buffer_[dep_event_i];
+      const auto& rel_dep_event = start_times_registry_.rel_dep_events_buffer_[to_idx(cell)][dep_event_i];
+      rel_dep_event.active_days_.for_each_set_bit([&](uint16_t const day_idx) {
+        const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
 
-      const auto from_loc = cmpnt_locs[cista::to_idx(dep_event.fin_dep_loc_)];
-      const routing_time dep_time = {tt_, dep_event.dep_time_};
-      state.round_bags_[0U][cista::to_idx(from_loc)].add(mc_raptor_label(
-        dep_time, 0_minutes, dep_time)
-      );
-      state.best_[cista::to_idx(from_loc)].add(mc_raptor_label(
-        dep_time, 0_minutes, dep_time)
-      );
-      state.station_mark_.set(cista::to_idx(from_loc), true);
+        const routing_time dep_time = {day_idx_t{day_idx}, rel_dep_event.dep_min_after_midnight_};
+        state.round_bags_[0U][cista::to_idx(from_loc)].add(mc_raptor_label(
+          dep_time, 0_minutes, dep_time)
+        );
+        state.best_[cista::to_idx(from_loc)].add(mc_raptor_label(
+          dep_time, 0_minutes, dep_time)
+        );
+        state.station_mark_.set(cista::to_idx(from_loc), true);
+      });
     }
 
     raptor.route();
@@ -382,8 +515,8 @@ inline bool uses_transport(const journey::leg& l) {
 void customizer::update_ranks_for(journey const& j,
                                   cista::base_t<cell_idx_t> const level,
                                   cell_idx_t const cell) {
+  auto& used_transfers_bv = used_transfers_[to_idx(cell)];
   for (const auto& leg : j.legs_) {
-    auto& used_transfers_bv = used_transfers_[to_idx(cell)];
     used_transfers_bv.set(to_idx(leg.from_), true);
     used_transfers_bv.set(to_idx(leg.to_), true);
     if (uses_transport(leg)) {

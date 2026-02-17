@@ -70,7 +70,6 @@ struct bmc_raptor_bag {
   void clear() { labels_.clear(); }
   std::size_t size() const { return labels_.size(); }
 
-private:
   std::vector<indexed_label> labels_;
 };
 
