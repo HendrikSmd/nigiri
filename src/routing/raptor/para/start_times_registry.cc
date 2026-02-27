@@ -8,7 +8,7 @@ namespace nigiri::routing::para {
   void relativize_bin_and_push(std::vector<cmpnt_dep_event> const& dep_events,
                                timetable const& tt,
                                std::vector<size_t>& bin_start_idxs,
-                               std::vector<relativized_cmpnt_dep_event>& rel_dep_events) {
+                               std::vector<relativized_component_departure_event>& rel_dep_events) {
 
     std::unordered_map<cmpnt_loc_idx_t, std::array<bitfield, 1440>> dep_loc_map;
     for (const auto& dep_event : dep_events) {
@@ -28,10 +28,8 @@ namespace nigiri::routing::para {
         if (mam_arr[i].none()) continue;
 
         rel_dep_events.emplace_back(
+          cmpnt_loc_idx,
           minutes_after_midnight_t{i},
-          0_minutes,
-          cmpnt_loc_idx,
-          cmpnt_loc_idx,
           mam_arr[i]
         );
       }
@@ -42,7 +40,7 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
                timetable const& tt,
                std::vector<size_t>& bin_start_idxs,
                std::vector<bin_range_t>& cell_cmpnt_search_bins,
-               std::vector<relativized_cmpnt_dep_event>& rel_dep_events) {
+               std::vector<relativized_component_departure_event>& rel_dep_events) {
     const auto next_bin_start_idx = bin_start_idxs.size();
     size_t n_non_empty = 0U;
     for (const auto& bin : bins) {
@@ -54,11 +52,11 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
     cell_cmpnt_search_bins.emplace_back(next_bin_start_idx, next_bin_start_idx + n_non_empty);
   }
 
-  void populate_start_times_for(bin_grouping_strategy const strategy,
-                                component_idx_t cut_cmpnt_idx,
+  void populate_start_times_for(component_idx_t const cut_cmpnt_idx,
                                 timetable const& tt,
                                 bitvec const& route_mask,
-                                std::vector<relativized_cmpnt_dep_event>& dep_events_buffer,
+                                bool const compress_bins,
+                                std::vector<relativized_component_departure_event>& dep_events_buffer,
                                 std::vector<size_t>& bin_start_idxs,
                                 std::vector<bin_range_t>& cell_cmpnt_search_bins) {
     const auto& cmpnt_locations = tt.component_locations_[cut_cmpnt_idx];
@@ -74,22 +72,20 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
       inner.erase(last, inner.end());
     }
 
-    if (strategy == bin_grouping_strategy::DIRECT ||
-        strategy == bin_grouping_strategy::INITIAL_FOOTPATHS) {
-          push_bins(imm_dep_events, tt, bin_start_idxs, cell_cmpnt_search_bins, dep_events_buffer);
-    } else {
-      // strategy == bin_grouping_strategy::SQUASHED
+    if (compress_bins) {
       std::vector<std::vector<cmpnt_dep_event>> bins;
       compress_start_times(tt, cut_cmpnt_idx, imm_dep_events, bins);
       push_bins(bins, tt, bin_start_idxs, cell_cmpnt_search_bins, dep_events_buffer);
+    } else {
+      push_bins(imm_dep_events, tt, bin_start_idxs, cell_cmpnt_search_bins, dep_events_buffer);
     }
   }
 
-  void populate_start_times_for_cell(bin_grouping_strategy const strategy,
-                                     timetable const& tt,
+  void populate_start_times_for_cell(timetable const& tt,
                                      std::vector<component_idx_t> const& cut_cmpnts,
                                      bitvec const& route_mask,
-                                     std::vector<relativized_cmpnt_dep_event>& dep_events_buffer,
+                                     std::vector<relativized_component_departure_event>& dep_events_buffer,
+                                     bool const compress_bins,
                                      std::vector<size_t>& bin_start_idxs,
                                      std::vector<bin_range_t>& cmpnt_search_bins) {
     if (cut_cmpnts.empty()) {
@@ -97,7 +93,7 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
     }
 
     for (const auto cut_cmpnt_idx : cut_cmpnts) {
-      populate_start_times_for(strategy, cut_cmpnt_idx, tt, route_mask,
+      populate_start_times_for(cut_cmpnt_idx, tt, route_mask, compress_bins,
                                dep_events_buffer, bin_start_idxs, cmpnt_search_bins);
     }
     // sentinel
@@ -123,31 +119,31 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
     return cell_cut_cmpnts;
   }
 
-  void start_times_registry::populate(bin_grouping_strategy const strategy,
-                                      timetable const& tt,
+  void start_times_registry::populate(timetable const& tt,
                                       size_t const n_of_cells,
                                       std_vecvec<cell_idx_t> const& cmpnt_to_cell_idxs,
-                                      std::vector<bitvec> const& route_masks) {
+                                      std::vector<bitvec> const& route_masks,
+                                      bool const compress_bins) {
     auto const timer = scoped_timer("Populating departure events");
     resize(n_of_cells);
     clear();
 
     const auto cell_cut_cmpnts = collect_cell_cut_cmpnts(tt, n_of_cells, cmpnt_to_cell_idxs);
     for (auto cell_idx = 0U; cell_idx < n_of_cells; ++cell_idx) {
-      populate_start_times_for_cell(strategy, tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx],
-                                    rel_dep_events_buffer_[cell_idx], bin_start_idxs_[cell_idx],
-                                    cell_cmpnt_search_bins_[cell_idx]);
+      populate_start_times_for_cell(tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx],
+                                    cmpnt_dep_events_buffer_[cell_idx], compress_bins,
+                                    bin_start_idxs_[cell_idx], cell_cmpnt_search_bins_[cell_idx]);
     }
   }
 
   void start_times_registry::resize(size_t const n_of_cells) {
-    rel_dep_events_buffer_.resize(n_of_cells);
+    cmpnt_dep_events_buffer_.resize(n_of_cells);
     bin_start_idxs_.resize(n_of_cells);
     cell_cmpnt_search_bins_.resize(n_of_cells);
   }
 
   void start_times_registry::clear() {
-    clear_all(rel_dep_events_buffer_.begin(), rel_dep_events_buffer_.end());
+    clear_all(cmpnt_dep_events_buffer_.begin(), cmpnt_dep_events_buffer_.end());
     clear_all(bin_start_idxs_.begin(), bin_start_idxs_.end());
     clear_all(cell_cmpnt_search_bins_.begin(), cell_cmpnt_search_bins_.end());
   }

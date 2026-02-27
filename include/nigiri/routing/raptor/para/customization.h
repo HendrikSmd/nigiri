@@ -8,12 +8,16 @@
 #include "bmc_raptor_state.h"
 #include "mc_raptor_state.h"
 #include "start_times_registry.h"
+#include "route_rank_store.h"
 
 namespace nigiri::routing::para {
 
-struct route_rank_store;
-
 struct customizer {
+
+  enum class search_algorithm { mc_raptor, bmc_raptor };
+
+  constexpr static search_algorithm search_algo = search_algorithm::bmc_raptor;
+  constexpr static bool use_initial_footpaths = false;
 
   struct thread_task {
     thread_task(cell_idx_t const cell_idx,
@@ -33,8 +37,7 @@ struct customizer {
 
   customizer(timetable const& tt);
 
-  route_rank_store construct_route_rank_store(route_partition partition);
-private:
+  route_rank_store const& construct_route_rank_store(route_partition partition);
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
   void initialize_cut_stops();
@@ -60,7 +63,8 @@ private:
                                   unsigned k,
                                   location_idx_t target,
                                   cista::base_t<cell_idx_t> level,
-                                  cell_idx_t cell);
+                                  cell_idx_t cell,
+                                  component_idx_t component_idx);
   void log_progress() const;
 
   const timetable& tt_;
@@ -74,40 +78,17 @@ private:
   std::vector<bitvec> cell_cut_stops_;
   std::vector<std::vector<cell_idx_t>> cmpnt_to_current_lvl_cell_idxs_;
 
+  // Start Times
   start_times_registry start_times_registry_;
 
-
   // Results
-  vector_map<route_idx_t, interval<std::uint32_t>> route_rank_ranges_;
-  vector<rank_t> ranks_;
-
+  route_rank_store route_rank_store_;
 
   // Threads
   std::deque<std::mutex> cell_mutexes_;
 
   // Progress
   std::vector<size_t> cell_progress_;
-  std::atomic_bool finished_;
 };
-
-
-struct route_rank_store {
-  route_rank_store() = default;
-  explicit route_rank_store(vector_map<route_idx_t, interval<std::uint32_t>>&& route_rank_ranges,
-                            vector<rank_t>&& ranks,
-                            route_partition&& p);
-
-  auto                                          cista_members();
-
-  static cista::wrapped<route_rank_store>       read(std::filesystem::path const&);
-  void                                          write(std::filesystem::path const&) const;
-  void                                          print_summary(std::ostream&) const;
-
-  vector_map<route_idx_t, interval<std::uint32_t>> route_rank_ranges_;
-  vector<rank_t> ranks_;
-  route_partition partition_;
-};
-
-
 
 } // namespace nigiri::routing::para

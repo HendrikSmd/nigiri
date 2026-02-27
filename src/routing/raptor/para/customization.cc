@@ -16,23 +16,24 @@
 namespace nigiri::routing::para {
 
 customizer::customizer(timetable const& tt) :
-  tt_(tt), finished_(false) {}
+  tt_(tt) {}
 
-route_rank_store customizer::construct_route_rank_store(route_partition partition) {
+route_rank_store const& customizer::construct_route_rank_store(route_partition partition) {
   log(log_lvl::info, "customization", "on timetable from {} to {}",
     tt_.external_interval().from_,
     tt_.external_interval().to_
   );
 
+  std::atomic_bool level_finished{false};
   initialize(partition);
   for (cista::base_t<cell_idx_t> level = 0U; level <= partition.n_levels_; ++level) {
     log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(level), level);
 
-    finished_.store(false);
-    std::thread logger_thread([this] {
+    level_finished.store(false);
+    std::thread logger_thread([&] {
       while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(5U));
-        if (finished_) {
+        if (level_finished) {
           return;
         }
 
@@ -48,10 +49,16 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
         ++cut_cmpnt_bin_range_iter;
       });
     }
-    utl::parallel_for_run_threadlocal<bmc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
-      this->cut_routing_task(tasks[t_idx], state);
-    });
-    finished_.store(true);
+    if constexpr (search_algo == search_algorithm::mc_raptor) {
+      utl::parallel_for_run_threadlocal<mc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
+        this->cut_routing_task(tasks[t_idx], state);
+      });
+    } else {
+      utl::parallel_for_run_threadlocal<bmc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
+        this->cut_routing_task(tasks[t_idx], state);
+      });
+    }
+    level_finished.store(true);
     logger_thread.join();
     prepare_next_level();
     if (std::ranges::all_of(cell_cut_cmpnts_, [](const bitvec& bv){return !bv.any();})) {
@@ -61,9 +68,8 @@ route_rank_store customizer::construct_route_rank_store(route_partition partitio
     }
   }
 
-  return route_rank_store(std::move(route_rank_ranges_),
-                          std::move(ranks_),
-                          std::move(partition));
+  route_rank_store_.partition_ = std::move(partition);
+  return route_rank_store_;
 }
 
 void customizer::log_progress() const {
@@ -75,17 +81,17 @@ void customizer::log_progress() const {
 }
 
 void customizer::initialize_ranks() {
-  ranks_.clear();
-  route_rank_ranges_.clear();
+  route_rank_store_.ranks_.clear();
+  route_rank_store_.route_rank_ranges_.clear();
 
   for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
-    const auto route_range_begin = ranks_.size();
+    const auto route_range_begin = route_rank_store_.ranks_.size();
     const auto n_stops = tt_.route_location_seq_[route_idx].size();
     const auto n_route_rank_entries = 1 + ((2 * n_stops) - 2);
     const auto route_range_end = route_range_begin + n_route_rank_entries;
 
-    route_rank_ranges_.emplace_back(route_range_begin, route_range_end);
-    ranks_.resize(ranks_.size() + n_route_rank_entries, rank_t{0U});
+    route_rank_store_.route_rank_ranges_.emplace_back(route_range_begin, route_range_end);
+    route_rank_store_.ranks_.resize(route_rank_store_.ranks_.size() + n_route_rank_entries, rank_t{0U});
   }
 }
 
@@ -125,9 +131,9 @@ void customizer::initialize(route_partition const& p) {
   initialize_cut_stops();
   // must happen after cut stops have been initialized
   initialize_used_transfers();
-  start_times_registry_.populate(bin_grouping_strategy::SQUASHED, tt_, n_of_cells_on_first_lvl,
+  start_times_registry_.populate(tt_, n_of_cells_on_first_lvl,
                                  cmpnt_to_current_lvl_cell_idxs_,
-                                 route_masks_);
+                                 route_masks_, !use_initial_footpaths);
 }
 
 void customizer::initialize_route_masks(route_partition const& p) {
@@ -200,7 +206,9 @@ void customizer::prepare_next_level() {
   std::swap(transfer_masks_, used_transfers_);
   initialize_used_transfers();
 
-  start_times_registry_.populate(bin_grouping_strategy::SQUASHED, tt_, n_cells_in_next_level, cmpnt_to_current_lvl_cell_idxs_, route_masks_);
+  start_times_registry_.populate(tt_, n_cells_in_next_level,
+                                 cmpnt_to_current_lvl_cell_idxs_,
+                                 route_masks_, !use_initial_footpaths);
 
   std::ranges::fill(cell_progress_, 0U);
 }
@@ -251,7 +259,7 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
                       transfer_masks_[to_idx(cell)]};
 
     for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
-      const auto& rel_dep_event = start_times_registry_.rel_dep_events_buffer_[to_idx(cell)][dep_event_i];
+      const auto& rel_dep_event = start_times_registry_.cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
       const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
 
       search_bitfield sbf;
@@ -291,20 +299,21 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
     raptor.rounds();
     std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
 
-    bmc_raptor_bag<relative_journey> rel_journey_bag;
+    std::vector<bmc_journey> bmc_journey_bag;
     cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
-      raptor.emplace_relative_journeys_for(location_idx_t{i}, rel_journey_bag);
+      raptor.emplace_relative_journeys_for(location_idx_t{i}, bmc_journey_bag);
 
-      for (const auto& rel_j : rel_journey_bag) {
-        backtrack_and_update_ranks(rel_j.label_.label_iter_,
+      for (const auto& bmc_j : bmc_journey_bag) {
+        backtrack_and_update_ranks(bmc_j.label_iter_,
                                    bmc_state,
-                                   rel_j.label_.transfers_ + 1,
+                                   bmc_j.transfers_ + 1,
                                    location_idx_t{i},
                                    level,
-                                   cell);
+                                   cell,
+                                   cut_cmpnt_from);
       }
 
-      rel_journey_bag.clear();
+      bmc_journey_bag.clear();
     });
 
     bmc_state.reset();
@@ -318,7 +327,8 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
                                             const unsigned k,
                                             location_idx_t const target,
                                             cista::base_t<cell_idx_t> const level,
-                                            cell_idx_t const cell) {
+                                            cell_idx_t const cell,
+                                            component_idx_t) {
   auto& used_transfers_bv = used_transfers_[to_idx(cell)];
 
   auto current_label = *root_label;
@@ -326,13 +336,13 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
   auto target_loc = target;
 
   while (current_label.label_.has_parent_ == 1U) {
-
     const auto route_idx = current_label.label_.route_idx_;
 
     const auto& stop_sequence = tt_.route_location_seq_[route_idx_t{route_idx}];
 
     auto const enter_stop_idx = current_label.label_.enter_stop_idx_;
     auto const exit_stop_idx = current_label.label_.exit_stop_idx_;
+
 
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
     auto const exit_stp = stop{stop_sequence[exit_stop_idx]};
@@ -344,13 +354,13 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
     used_transfers_bv.set(exit_loc_idx, true);
     used_transfers_bv.set(to_idx(target_loc), true);
 
-    if (route_idx != route_idx_t::invalid().v_) {
-      auto const [from, _] = route_rank_ranges_[route_idx_t{route_idx}];
+    if (route_idx != to_idx(route_idx_t::invalid())) {
+      auto const [from, _] = route_rank_store_.route_rank_ranges_[route_idx_t{route_idx}];
       const unsigned dep_route_rank_off = 1 + (enter_stop_idx * 2);
       const unsigned arr_route_rank_off = (exit_stop_idx * 2);
-      ranks_[from] = rank_t{level + 1};
-      ranks_[from + dep_route_rank_off] = rank_t{level + 1};
-      ranks_[from + arr_route_rank_off] = rank_t{level + 1};
+      route_rank_store_.ranks_[from] = rank_t{level + 1};
+      route_rank_store_.ranks_[from + dep_route_rank_off] = rank_t{level + 1};
+      route_rank_store_.ranks_[from + arr_route_rank_off] = rank_t{level + 1};
 
       // mark route as updated for the next level
       updated_routes_[to_idx(cell)].set(route_idx, true);
@@ -360,8 +370,6 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
     current_k--;
     target_loc = location_idx_t{enter_loc_idx};
   }
-
-
 }
 
 void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& state) {
@@ -384,7 +392,7 @@ void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& stat
                      transfer_masks_[to_idx(cell)]};
 
     for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
-      const auto& rel_dep_event = start_times_registry_.rel_dep_events_buffer_[to_idx(cell)][dep_event_i];
+      const auto& rel_dep_event = start_times_registry_.cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
       rel_dep_event.active_days_.for_each_set_bit([&](uint16_t const day_idx) {
         const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
 
@@ -526,64 +534,18 @@ void customizer::update_ranks_for(journey const& j,
       // make sure our journey does not contain a leg that
       // uses a route we masked out
       assert(route_masks_[to_idx(cell)][to_idx(route_idx)]);
-      auto const [from, _] = route_rank_ranges_[route_idx];
+      auto const [from, _] = route_rank_store_.route_rank_ranges_[route_idx];
       auto const [from_stop, to_stop_exclusive] = run.stop_range_;
       const unsigned dep_route_rank_off = 1 + (from_stop * 2);
       const unsigned arr_route_rank_off = ((to_stop_exclusive-1) * 2);
-      ranks_[from] = rank_t{level + 1};
-      ranks_[from + dep_route_rank_off] = rank_t{level + 1};
-      ranks_[from + arr_route_rank_off] = rank_t{level + 1};
+      route_rank_store_.ranks_[from] = rank_t{level + 1};
+      route_rank_store_.ranks_[from + dep_route_rank_off] = rank_t{level + 1};
+      route_rank_store_.ranks_[from + arr_route_rank_off] = rank_t{level + 1};
 
       // mark route as updated for the next level
       updated_routes_[to_idx(cell)].set(to_idx(route_idx), true);
     }
   }
-}
-
-
-
-
-
-route_rank_store::route_rank_store(vector_map<route_idx_t, interval<std::uint32_t>>&& route_rank_ranges,
-                                   vector<rank_t>&& ranks,
-                                   route_partition&& p) :
-  route_rank_ranges_(std::move(route_rank_ranges)),
-  ranks_(std::move(ranks)),
-  partition_(std::move(p)) {}
-
-auto route_rank_store::cista_members() {
-  return std::tie(route_rank_ranges_, ranks_, partition_);
-}
-
-void route_rank_store::write(std::filesystem::path const& path) const {
-  return cista::write(path, *this);
-}
-
-void route_rank_store::print_summary(std::ostream&) const {
-  std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
-  std::vector<size_t> transfer_rank_counts(partition_.n_levels_ + 1, 0ULL);
-
-  auto const n_routes = route_rank_ranges_.size();
-  for (auto r = route_idx_t{0}; r < n_routes; ++r) {
-    const auto [r_from, r_to] = route_rank_ranges_[r];
-    route_rank_counts[to_idx(ranks_[r_from])]++;
-
-    for (auto r_rank_idx = r_from + 1; r_rank_idx < r_to; ++r_rank_idx) {
-      transfer_rank_counts[to_idx(ranks_[r_rank_idx])]++;
-    }
-  }
-
-  const auto n_transfers = ranks_.size() - route_rank_ranges_.size();
-
-  std::cout << "Counts per rank: " << std::endl;
-  for (size_t rank = 0U; rank <= partition_.n_levels_; ++rank) {
-    std::cout << "  rank=" << std::left << std::setw(10) << rank << ": " << route_rank_counts[rank] << "/" << n_routes << " routes, "
-    << transfer_rank_counts[rank] << "/" << n_transfers << " transfers" << std::endl;
-  }
-}
-
-cista::wrapped<route_rank_store> route_rank_store::read(std::filesystem::path const& path) {
-  return cista::read<route_rank_store>(path);
 }
 
 } // namespace nigiri::routing::para

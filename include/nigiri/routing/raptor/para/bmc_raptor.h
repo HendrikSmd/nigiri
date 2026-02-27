@@ -1,16 +1,18 @@
 #pragma once
 
 #include "nigiri/timetable.h"
+
 #include "bmc_raptor_state.h"
+#include "routing_time.h"
 
 namespace nigiri::routing::para {
 
-struct relative_journey {
+struct bmc_journey {
 
-  static bool dominates(relative_journey const& j1, relative_journey const& j2);
+  static bool dominates(bmc_journey const& j1, bmc_journey const& j2);
 
-  std::uint16_t arrival_;
-  std::uint16_t departure_;
+  routing_time arrival_;
+  routing_time departure_;
   std::uint16_t transfers_;
   bmc_raptor_bag_t::const_iterator label_iter_;
 };
@@ -52,7 +54,7 @@ struct bmc_raptor {
   static unsigned end_k();
 
 
-  void emplace_relative_journeys_for(location_idx_t location_idx, bmc_raptor_bag<relative_journey>& bag);
+  void emplace_relative_journeys_for(location_idx_t location_idx, std::vector<bmc_journey>& bag);
 
 
 

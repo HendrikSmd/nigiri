@@ -1,15 +1,18 @@
 #include "nigiri/routing/raptor/para/bmc_raptor.h"
 
-#include "nigiri/types.h"
-#include "nigiri/stop.h"
+#include "boost/iostreams/seek.hpp"
+
+#include "nigiri/common/linear_lower_bound.h"
 #include "nigiri/routing/raptor/para/routing_time.h"
+#include "nigiri/stop.h"
+#include "nigiri/types.h"
 
 #include "utl/enumerate.h"
 
 namespace nigiri::routing::para {
 
-bool relative_journey::dominates(relative_journey const& j1,
-                                 relative_journey const& j2) {
+bool bmc_journey::dominates(bmc_journey const& j1,
+                            bmc_journey const& j2) {
   return j1.departure_ >= j2.departure_ && j1.arrival_ <= j2.arrival_ && j1.transfers_ <= j2.transfers_;
 }
 
@@ -178,6 +181,14 @@ void bmc_raptor::get_earliest_sufficient_transports(std::uint32_t const bag_idx,
   const delta arr_as_delta(label.arrival_with_transfer_);
   const auto arr_days_after_dep = static_cast<std::uint16_t>(arr_as_delta.days());
 
+  auto const seek_first_day = [&]() {
+    return linear_lb(dep_event_times.begin(), dep_event_times.end(),
+                     arr_as_delta.mam(),
+                     [&](delta const a, int16_t const b) {
+                       return a.mam() < b;
+                     });
+  };
+
   search_bitfield to_serve_tdb = label_tdb;
   for (auto days_after_dep = arr_days_after_dep;
             days_after_dep < n_days_to_iterate;
@@ -187,10 +198,7 @@ void bmc_raptor::get_earliest_sufficient_transports(std::uint32_t const bag_idx,
     }
 
     auto const time_range_to_scan = it_range{
-      days_after_dep == arr_days_after_dep ? std::lower_bound(
-        dep_event_times.begin(),
-        dep_event_times.end(), arr_as_delta,
-                    [&](auto&& a, auto&& b) { return a.mam() < b.mam(); }) : dep_event_times.begin(),
+      days_after_dep == arr_days_after_dep ? seek_first_day() : dep_event_times.begin(),
       dep_event_times.end()};
 
     if (time_range_to_scan.empty()) {
@@ -499,26 +507,31 @@ void bmc_raptor::gather_journeys() {
 
 unsigned bmc_raptor::end_k() { return kMaxTransfers + 1U; }
 
-void bmc_raptor::emplace_relative_journeys_for(location_idx_t loc_idx, bmc_raptor_bag<relative_journey>& bag) {
-  constexpr auto dom = [](relative_journey const& l1, relative_journey const& l2) {
-    return relative_journey::dominates(l1, l2);
+void bmc_raptor::emplace_relative_journeys_for(location_idx_t loc_idx, std::vector<bmc_journey>& bag) {
+  constexpr auto dom = [](bmc_journey const& l1, bmc_journey const& l2) {
+    return bmc_journey::dominates(l1, l2);
   };
 
-  for (auto k = 1U; k != end_k(); ++k) {
+  for (auto k = 0U; k != end_k(); ++k) {
     auto const& round_bag = state_.round_bags_[k][to_idx(loc_idx)];
     if (round_bag.size() == 0) {
       continue;
     }
 
     for (auto label_it = round_bag.begin(); label_it != round_bag.end(); ++label_it) {
-      bag.add<dom>(
-        {
-          .arrival_ = label_it->label_.arrival_,
-          .departure_ = label_it->label_.departure_,
-          .transfers_ = static_cast<std::uint16_t>(k - 1),
-          .label_iter_ = label_it
-        },
-        label_it->tdb_);
+      const auto& label = label_it->label_;
+      const auto& tdb = label_it->tdb_;
+      tdb.for_each_set_bit([&](size_t const i) {
+        pareto_utils<bmc_journey>::pareto_add(
+          bag,
+          {
+            .arrival_ = routing_time{static_cast<int>(i * 1440 + label.arrival_)},
+            .departure_ = routing_time{static_cast<int>(i * 1440 + label.departure_)},
+            .transfers_ = static_cast<std::uint16_t>(k > 0 ? k-1 : 0U),
+            .label_iter_ = label_it
+          },
+          dom);
+      });
     }
   }
 }

@@ -214,6 +214,7 @@ void mc_raptor::update_footpaths(unsigned const k) const {
         mc_raptor_label l_with_foot{get<0>(rl.arrival_) + fp.duration(), 0_minutes,
                                     rl.departure_, rl.prev_};
 
+
         l_with_foot.with_ = rl.with_;
         l_with_foot.transfer_ =
             mc_raptor_label::footpath_leg{fp.duration(), fp.target()};
@@ -317,7 +318,7 @@ void mc_raptor::reconstruct() const {
     // const auto fastest_direct =
     // get_fastest_direct(location_idx_t{location_idx});
     constexpr auto fastest_direct = duration_t::max();
-    for (auto k = 0U; k != end_k(); ++k) {
+    for (auto k = 1U; k != end_k(); ++k) {
       auto const& round_bag = state_.round_bags_[k][location_idx];
       if (round_bag.size() == 0) {
         continue;
@@ -331,6 +332,7 @@ void mc_raptor::reconstruct() const {
             travel_time >= fastest_direct) {
           continue;
         }
+
 
         auto const [optimal, it, _] = state_.results_[w_idx].add(
             journey{.legs_ = {},
