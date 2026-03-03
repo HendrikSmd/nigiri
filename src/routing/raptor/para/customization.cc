@@ -11,6 +11,7 @@
 #include "nigiri/routing/raptor/para/mc_raptor.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
 #include "nigiri/routing/raptor/para/bmc_raptor.h"
+#include "nigiri/routing/raptor/para/bmc_raptor_state.h"
 
 
 namespace nigiri::routing::para {
@@ -242,6 +243,17 @@ void customizer::unite_cut_cmpnts() {
 }
 
 void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc_state) {
+#ifdef NIGIRI_ENABLE_SIMD
+  bmc_round_meta_data initial_md{
+    .route_idx_ = 0U,
+    .parent_bag_idx_ = 0U,
+    .enter_stop_idx_ = 0U,
+    .exit_stop_idx_ = 0U,
+    .has_parent_ = 0,
+    .is_footpath_ = 0
+  };
+#endif
+
   const auto cut_cmpnt_from = task.component_idx_;
   const auto cell = task.cell_idx_;
   const auto level = task.level_;
@@ -264,37 +276,54 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
 
       search_bitfield sbf;
       truncate_to(rel_dep_event.active_days_, sbf);
-
+      const auto dep = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count());
+#ifdef NIGIRI_ENABLE_SIMD
       bool added = bmc_raptor::add_to_non_dest_round_bag(
         bmc_state.round_bags_[0U][to_idx(from_loc)],
-        {
-          .route_idx_ = 0U,
-          .enter_stop_idx_ = 0U,
-          .exit_stop_idx_ = 0U,
-          .arrival_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-          .parent_bag_idx_ = 0U,
-          .arrival_with_transfer_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-          .departure_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-          .is_footpath_ = 0,
-          .has_parent_ = 0
-        }, sbf);
+        {dep, dep, dep},
+        initial_md,
+        sbf
+      );
       if (added) {
         bmc_raptor::add_to_non_dest_round_bag(
           bmc_state.best_bags_[to_idx(from_loc)],
-          {
-            .route_idx_ = 0U,
-            .enter_stop_idx_ = 0U,
-            .exit_stop_idx_ = 0U,
-            .arrival_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-            .parent_bag_idx_ = 0U,
-            .arrival_with_transfer_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-            .departure_ = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count()),
-            .is_footpath_ = 0,
-            .has_parent_ = 0
-          }, sbf);
+          {dep, dep, dep},
+          initial_md,
+          sbf
+        );
         bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
       }
+#else
+      bool added = bmc_raptor::add_to_non_dest_round_bag(
+          bmc_state.round_bags_[0U][to_idx(from_loc)],
+          {.route_idx_ = 0U,
+           .enter_stop_idx_ = 0U,
+           .exit_stop_idx_ = 0U,
+           .arrival_ = dep,
+           .parent_bag_idx_ = 0U,
+           .arrival_with_transfer_ = dep,
+           .departure_ = dep,
+           .is_footpath_ = 0,
+           .has_parent_ = 0},
+          sbf);
+      if (added) {
+        bmc_raptor::add_to_non_dest_round_bag(
+            bmc_state.best_bags_[to_idx(from_loc)],
+            {.route_idx_ = 0U,
+             .enter_stop_idx_ = 0U,
+             .exit_stop_idx_ = 0U,
+             .arrival_ = dep,
+             .parent_bag_idx_ = 0U,
+             .arrival_with_transfer_ = dep,
+             .departure_ = dep,
+             .is_footpath_ = 0,
+             .has_parent_ = 0},
+            sbf);
+        bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
+      }
+#endif
     }
+
 
     raptor.rounds();
     std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
@@ -313,6 +342,7 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
                                    cut_cmpnt_from);
       }
 
+
       bmc_journey_bag.clear();
     });
 
@@ -330,18 +360,21 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
                                             cell_idx_t const cell,
                                             component_idx_t) {
   auto& used_transfers_bv = used_transfers_[to_idx(cell)];
-
-  auto current_label = *root_label;
+#ifdef NIGIRI_ENABLE_SIMD
+  auto current_label = (*root_label).metadata_;
+#else
+  auto current_label = root_label->label_;
+#endif
   auto current_k = k;
   auto target_loc = target;
 
-  while (current_label.label_.has_parent_ == 1U) {
-    const auto route_idx = current_label.label_.route_idx_;
+  while (current_label.has_parent_ == 1U) {
+    const auto route_idx = current_label.route_idx_;
 
     const auto& stop_sequence = tt_.route_location_seq_[route_idx_t{route_idx}];
 
-    auto const enter_stop_idx = current_label.label_.enter_stop_idx_;
-    auto const exit_stop_idx = current_label.label_.exit_stop_idx_;
+    auto const enter_stop_idx = current_label.enter_stop_idx_;
+    auto const exit_stop_idx = current_label.exit_stop_idx_;
 
 
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
@@ -365,8 +398,11 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
       // mark route as updated for the next level
       updated_routes_[to_idx(cell)].set(route_idx, true);
     }
-
-    current_label = state.round_bags_[current_k - 1][enter_loc_idx].labels_[current_label.label_.parent_bag_idx_];
+#ifdef NIGIRI_ENABLE_SIMD
+    current_label = state.round_bags_[current_k - 1][enter_loc_idx].meta_data_[current_label.parent_bag_idx_];
+#else
+    current_label = state.round_bags_[current_k - 1][enter_loc_idx].labels_[current_label.parent_bag_idx_].label_;
+#endif
     current_k--;
     target_loc = location_idx_t{enter_loc_idx};
   }

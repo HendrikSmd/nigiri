@@ -19,33 +19,61 @@ struct bmc_journey {
 
 struct bmc_raptor {
 
-  bmc_raptor(timetable const& tt,
-             bmc_raptor_state& state,
-             bitvec const& destination_mask,
-             bitvec const& route_mask,
+  bmc_raptor(timetable const& tt, bmc_raptor_state& state,
+             bitvec const& destination_mask, bitvec const& route_mask,
              bitvec const& transfer_mask);
 
+#ifdef NIGIRI_ENABLE_SIMD
+  static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
+                                        std::array<std::uint16_t, 3> const& label,
+                                        bmc_round_meta_data const& meta_data,
+                                        search_bitfield sbf);
 
-  static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag, bmc_raptor_label label, search_bitfield sbf);
-  static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag, bmc_raptor_label label, search_bitfield sbf);
+  static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
+                                    std::array<std::uint16_t, 3> const& label,
+                                    bmc_round_meta_data const& meta_data,
+                                    search_bitfield sbf);
 
-  static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag, bmc_raptor_label const& label, search_bitfield& sbf);
-  static void filter_by_dest_bag(bmc_raptor_bag_t const& bag, bmc_raptor_label const& label, search_bitfield& sbf);
+  static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
+                                     std::array<std::uint16_t, 3> const& label,
+                                     search_bitfield& sbf);
 
-  static bool add_to_route_bag(bmc_raptor_route_bag_t& bag, bmc_raptor_route_label label, search_bitfield sbf);
+  static void filter_by_dest_bag(bmc_raptor_bag_t const& bag,
+                                 std::array<std::uint16_t, 3> const& label,
+                                 search_bitfield& sbf);
+#else
+  static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
+                                        const bmc_raptor_label& label,
+                                        search_bitfield sbf);
+
+  static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
+                                    bmc_raptor_label const& label,
+                                    search_bitfield sbf);
+
+  static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
+                                     bmc_raptor_label const& label,
+                                     search_bitfield& sbf);
+
+  static void filter_by_dest_bag(bmc_raptor_bag_t const& bag,
+                                 bmc_raptor_label const& label,
+                                 search_bitfield& sbf);
+#endif
+
+  static bool add_to_route_bag(bmc_raptor_route_bag_t& bag,
+                               bmc_raptor_route_label label,
+                               search_bitfield sbf);
+
   static bitset<kMaxDays> get_tt_day_mask(timetable const& tt);
 
-  void init_starts(location_idx_t location_idx,
-                   bool use_initial_fp);
+  void init_starts(location_idx_t location_idx, bool use_initial_fp);
+
   void init_location_with_offset(location_idx_t location_idx,
                                  duration_t minutes_to_arrive);
 
-  void get_earliest_sufficient_transports(std::uint32_t bag_idx,
-                                          bmc_raptor_label const& label,
-                                          search_bitfield const& td_bitfield,
-                                          route_idx_t route_idx,
-                                          unsigned short stop_idx,
-                                          bmc_raptor_route_bag_t& bag);
+  void get_earliest_sufficient_transports(
+      std::uint32_t bag_idx, std::uint16_t departure, std::uint16_t arr_with_transfer,
+      search_bitfield const& td_bitfield, route_idx_t route_idx,
+      unsigned short stop_idx, bmc_raptor_route_bag_t& bag);
 
   void update_footpaths(unsigned k);
   bool update_route(unsigned k, route_idx_t r);
@@ -53,10 +81,8 @@ struct bmc_raptor {
   void gather_journeys();
   static unsigned end_k();
 
-
-  void emplace_relative_journeys_for(location_idx_t location_idx, std::vector<bmc_journey>& bag);
-
-
+  void emplace_relative_journeys_for(location_idx_t location_idx,
+                                     std::vector<bmc_journey>& bag);
 
   timetable const& tt_;
   bmc_raptor_state& state_;
@@ -66,4 +92,4 @@ struct bmc_raptor {
   bitset<kMaxDays> const tt_day_mask_;
 };
 
-} // nigiri::routing::raptor::para
+}  // namespace nigiri::routing::para
