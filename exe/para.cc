@@ -241,13 +241,11 @@ int main(int argc, char** argv) {
     auto in_part = fs::path{};
     auto in_tt = fs::path{};
     auto out = fs::path{"store.bin"};
-    auto n_threads = std::size_t{0};
 
     bpo::options_description start_custom_desc("export-hgraph options");
     start_custom_desc.add_options()
         ("in_part", bpo::value(&in_part), "path to the route partition file (nigiri format)")
         ("in_tt", bpo::value(&in_tt), "path to the timetable")
-        ("t", bpo::value(&n_threads)->default_value(1U), "number of threads")
         ("out", bpo::value(&out)->default_value(out), "path to the output file");
 
 
@@ -266,11 +264,9 @@ int main(int argc, char** argv) {
     tt.resolve();
 
     routing::para::customizer customizer{tt};
-    std::cout << n_threads << std::endl;
     auto const store = customizer.construct_route_rank_store(
-      std::move(*routing::para::route_partition::read(in_part)),
-      n_threads
-    );
+      std::move(*routing::para::route_partition::read(in_part)));
+    store.print_summary(std::cout);
     store.write(out);
 
   } else if (command == "inspect-rank-store") {

@@ -245,7 +245,7 @@ void bmc_raptor::get_earliest_sufficient_transports(
       static_cast<std::uint16_t>(arr_as_delta.days());
 
   auto const seek_first_day = [&]() {
-    return std::lower_bound(
+    return linear_lb(
         dep_event_times.begin(), dep_event_times.end(), arr_as_delta.mam(),
         [&](delta const a, int16_t const b) { return a.mam() < b; });
   };
@@ -506,9 +506,9 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
 #endif
       } else {
 #ifdef NIGIRI_ENABLE_SIMD
-        filter_by_dest_bag(state_.best_bags_[l_idx], new_fields_buff, candidate_tdb);
+        filter_by_non_dest_bag(state_.best_bags_[l_idx], new_fields_buff, candidate_tdb);
 #else
-        filter_by_dest_bag(state_.best_bags_[l_idx], candidate_lbl, candidate_tdb);
+        filter_by_non_dest_bag(state_.best_bags_[l_idx], candidate_lbl, candidate_tdb);
 #endif
       }
 
