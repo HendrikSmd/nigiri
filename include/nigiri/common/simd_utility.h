@@ -6,6 +6,13 @@
 
 namespace nigiri {
 
+struct wrapped_m256i {
+  __m256i data_{};
+  wrapped_m256i() = default;
+  wrapped_m256i(__m256i x) : data_(x) {}
+  operator __m256i() const {return data_;}
+};
+
 /*
  * Takes two 256bit wide registers
  * a = [ a0 | a1 | a2 | a3 | a4 | a5 | a6 | a7 ]

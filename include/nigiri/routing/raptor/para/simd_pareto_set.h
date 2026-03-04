@@ -4,6 +4,7 @@
 
 #include <concepts>
 
+#include "nigiri/common/simd_utility.h"
 #include "nigiri/types.h"
 
 #include <array>
@@ -104,9 +105,9 @@ struct simd_pareto_bag {
     size_t const len = bitsets_.size();
 
     while (i < len) {
-      if (i + len < len) {
-        std::array<__m256i, N> candidate_broadcasted{};
-        std::array<__m256i, N> existing_loaded{};
+      if (i + lane_count_minus_one < len) {
+        std::array<wrapped_m256i, N> candidate_broadcasted{};
+        std::array<wrapped_m256i, N> existing_loaded{};
         for (size_t field_idx = 0; field_idx < N; field_idx++) {
           candidate_broadcasted[field_idx] = broadcast(candidate[field_idx]);
           existing_loaded[field_idx] = load(&fields_[field_idx][i]);
@@ -167,20 +168,31 @@ struct simd_pareto_bag {
       }
     }
 
-    meta_data_.push_back(meta_data);
-    bitsets_.push_back(new_bits);
-    for (size_t field_idx = 0U; field_idx < N; field_idx++) {
-      fields_[field_idx].push_back(candidate[field_idx]);
-    }
-
     // Trigger compaction if threshold reached
-
     if constexpr (compaction_threshold_ == 0.0) {
-      compact();
+      auto new_size = compact() + 1;
+      resize_fields(new_size);
+      bitsets_.resize(new_size);
+      meta_data_.resize(new_size);
+
+      meta_data_.back() = meta_data;
+      bitsets_.back() = new_bits;
+      for (size_t field_idx = 0U; field_idx < N; field_idx++) {
+        fields_[field_idx].back() = candidate[field_idx];
+      }
     } else {
       if (bitsets_.size() > 0 && static_cast<double>(dead_count_) / static_cast<double>(bitsets_.size()) >
           compaction_threshold_) {
-        compact();
+        auto new_size = compact() + 1;
+        resize_fields(new_size);
+        bitsets_.resize(new_size);
+        meta_data_.resize(new_size);
+
+        meta_data_.back() = meta_data;
+        bitsets_.back() = new_bits;
+        for (size_t field_idx = 0U; field_idx < N; field_idx++) {
+          fields_[field_idx].back() = candidate[field_idx];
+        }
     }
     }
     return true;
@@ -194,9 +206,9 @@ struct simd_pareto_bag {
     size_t i = 0U;
 
     while (i < len) {
-      if (i + len < len) {
-        std::array<__m256i, N> existing_loaded{};
-        std::array<__m256i, N> candidate_broadcasted{};
+      if (i + lane_count_minus_one < len) {
+        std::array<wrapped_m256i, N> existing_loaded{};
+        std::array<wrapped_m256i, N> candidate_broadcasted{};
         for (size_t field_idx = 0; field_idx < N; field_idx++) {
           candidate_broadcasted[field_idx] = broadcast(candidate[field_idx]);
           existing_loaded[field_idx] = load(&fields_[field_idx][i]);
@@ -291,7 +303,7 @@ private:
     }
   }
 
-  void compact() {
+  size_t compact() {
     size_t write_idx = 0U;
     for (size_t read_idx = 0U; read_idx < size(); ++read_idx) {
       if (bitsets_[read_idx].any()) {
@@ -303,11 +315,9 @@ private:
         write_idx++;
       }
     }
-
-    resize_fields(write_idx);
-    bitsets_.resize(write_idx);
-    meta_data_.resize(write_idx);
     dead_count_ = 0;
+
+    return write_idx;
   }
 
 };

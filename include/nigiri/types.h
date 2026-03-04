@@ -58,7 +58,7 @@ using ptr = cista::raw::ptr<T>;
 template <size_t Size>
 using bitset = cista::bitset<Size>;
 
-constexpr auto const kMaxDays = 512;
+constexpr auto const kMaxDays = 128;
 using bitfield = bitset<kMaxDays>;
 
 constexpr auto const kMaxSearchDays = 64;

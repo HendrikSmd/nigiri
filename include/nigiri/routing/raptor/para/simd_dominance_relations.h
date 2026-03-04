@@ -20,8 +20,8 @@ struct bicriteria_conservative_dominance_16 {
   static constexpr std::size_t lane_count = 256 / (sizeof(field_type) * 8);
 
   static mask_t dominates_candidate(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_candidate = _mm256_and_si256(
         cmp_ge_epu16(existing_broadcasted[0], candidate_duplicated[0]),
         cmp_le_epu16(existing_broadcasted[2], candidate_duplicated[1]));
@@ -35,8 +35,8 @@ struct bicriteria_conservative_dominance_16 {
   }
 
   static mask_t dominates_existing(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_existing = _mm256_and_si256(
         cmp_ge_epu16(candidate_duplicated[0], existing_broadcasted[0]),
         cmp_le_epu16(candidate_duplicated[2], existing_broadcasted[1]));
@@ -59,8 +59,8 @@ struct bicriteria_dominance_16 {
   static constexpr std::size_t lane_count = 256 / (sizeof(field_type) * 8);
 
   static mask_t dominates_candidate(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_candidate = _mm256_and_si256(
         cmp_ge_epu16(existing_broadcasted[0], candidate_duplicated[0]),
         cmp_le_epu16(existing_broadcasted[2], candidate_duplicated[2]));
@@ -74,8 +74,8 @@ struct bicriteria_dominance_16 {
   }
 
   static mask_t dominates_existing(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_existing = _mm256_and_si256(
         cmp_ge_epu16(candidate_duplicated[0], existing_broadcasted[0]),
         cmp_le_epu16(candidate_duplicated[2], existing_broadcasted[2]));
@@ -98,8 +98,8 @@ struct boarded_transport_dominance_32 {
   static constexpr std::size_t lane_count = 256 / (sizeof(field_type) * 8);
 
   static mask_t dominates_candidate(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_candidate = _mm256_and_si256(
         cmp_ge_epu32(existing_broadcasted[0], candidate_duplicated[0]),
         _mm256_or_si256(
@@ -122,8 +122,8 @@ struct boarded_transport_dominance_32 {
   }
 
   static mask_t dominates_existing(
-      std::array<__m256i, 3> const& candidate_duplicated,
-      std::array<__m256i, 3> const& existing_broadcasted) {
+      std::array<wrapped_m256i, 3> const& candidate_duplicated,
+      std::array<wrapped_m256i, 3> const& existing_broadcasted) {
     __m256i const dominates_existing = _mm256_and_si256(
         cmp_ge_epu32(candidate_duplicated[0], existing_broadcasted[0]),
         _mm256_or_si256(
