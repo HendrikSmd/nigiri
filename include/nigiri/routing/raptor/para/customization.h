@@ -1,6 +1,6 @@
 #pragma once
 
-#include "boost/thread/pthread/mutex.hpp"
+#include <deque>
 
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/routing/start_times.h"
@@ -85,7 +85,7 @@ struct customizer {
   route_rank_store route_rank_store_;
 
   // Threads
-  std::vector<std::mutex> cell_mutexes_;
+  std::deque<std::mutex> cell_mutexes_;
 
   // Progress
   std::vector<size_t> cell_progress_;
