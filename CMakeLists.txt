@@ -66,7 +66,9 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
         -Wno-duplicate-enum
         -Wno-switch-default
         -Wno-ctad-maybe-unsupported
-        -Werror)
+        -Werror
+        -mavx2
+        -mbmi2)
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
   set(nigiri-compile-options -Wall -Wextra -Werror)
 elseif (MSVC)
@@ -75,7 +77,9 @@ else ()
   set(nigiri-compile-options
         -Wall
         -Wextra
-        -Wno-maybe-uninitialized)
+        -Wno-maybe-uninitialized
+        -mavx2
+        -mbmi2)
   if (NOT CMAKE_CROSSCOMPILING)
     set(nigiri-compile-options ${nigiri-compile-options} -Werror)
   endif ()
