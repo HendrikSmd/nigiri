@@ -85,7 +85,7 @@ struct customizer {
   route_rank_store route_rank_store_;
 
   // Threads
-  std::deque<std::mutex> cell_mutexes_;
+  std::vector<std::mutex> cell_mutexes_;
 
   // Progress
   std::vector<size_t> cell_progress_;
