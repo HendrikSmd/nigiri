@@ -138,50 +138,6 @@ nigiri::pareto_set<nigiri::routing::journey> raptor_search(
                .journeys_);
 }
 
-pareto_set<journey> mc_raptor_search(
-    timetable const& tt, query q, para::mc_raptor_state& state) {
-  using namespace nigiri;
-  utl::verify(std::holds_alternative<interval<unixtime_t>>(q.start_time_), "ontrip queries not supported in mc_raptor");
-  //utl::verify(q.start_match_mode_ == location_match_mode::kExact &&
-  //            q.dest_match_mode_ == location_match_mode::kExact,
-  //            "intermodal queries not supported in mc_raptor");
-  utl::verify(q.start_.size() == 1 && q.destination_.size() == 1, "mc_raptor only supports single start and destination");
-  utl::verify(q.start_.front().duration().count() == 0U &&
-              q.destination_.front().duration().count() == 0U,
-              "mc_raptor does not support any offsets");
-  utl::verify(q.max_start_offset_ == kMaxTravelTime, "max-start-offset: not supported by mc_raptor");
-  utl::verify(q.max_transfers_ == kMaxTransfers, "max-transfers: not supported by mc-raptor");
-  utl::verify(q.max_travel_time_ == kMaxTravelTime, "max-travel-time: not supported by mc-raptor");
-  utl::verify(q.min_connection_count_ == 0U, "min-connection-count: not supported by mc-raptor");
-  utl::verify(! q.extend_interval_earlier_, "Extending interval earlier not supported in mc_raptor");
-  utl::verify(! q.extend_interval_later_, "Extending interval later not supported in mc_raptor");
-  utl::verify(! q.max_interval_.has_value(), "interval extension not supported by mc-raptor");
-
-  auto from_idx = q.start_.front().target();
-  auto const intvl = std::get<interval<unixtime_t>>(q.start_time_);
-  bitvec dest_bv;
-  std::vector<uint16_t> dists;
-  collect_destinations(tt, q.destination_, q.dest_match_mode_, dest_bv, dists);
-  auto route_mask = bitvec::max(tt.n_routes());
-  para::mc_raptor raptor{tt,
-                 state,
-                 intvl,
-                 q.start_match_mode_,
-                 {
-                         {from_idx, 0_minutes, 0U}
-                 },
-                 dest_bv,
-                 route_mask};
-  raptor.route();
-  pareto_set<journey> merged;
-  for (auto& dest_res : state.results_) {
-    for (auto& j : dest_res) {
-      merged.add(std::move(j));
-    }
-  }
-  return merged;
-}
-
 void process_queries_raptor(
     std::vector<nigiri::query_generation::start_dest_query> const& queries,
     std::vector<benchmark_result>& results,
