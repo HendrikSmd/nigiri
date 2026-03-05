@@ -414,7 +414,7 @@ private:
   }
 
   static rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
-    return rank_t{g_cell.level + static_cast<uint16_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
+    return rank_t{g_cell.level + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
   }
 
   date::sys_days base() const {
@@ -1008,7 +1008,7 @@ private:
 
     std::uint32_t r_ranks_from = 0U;
     if constexpr (algo_version == version::kPara) {
-      r_ranks_from = rank_store_->route_rank_ranges_[r].from_;
+      r_ranks_from = rank_store_->route_rank_start_idx_[r];
     }
     for (auto i = 0U; i != stop_seq.size(); ++i) {
       auto const stop_idx =

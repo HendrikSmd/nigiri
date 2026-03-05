@@ -11,7 +11,7 @@
 namespace nigiri::routing::para {
 
 cell_idx_t route_partition::get_parent_idx(cell_idx_t const cell_idx,
-                                           std::uint16_t const levels) {
+                                           std::uint8_t const levels) {
   return cell_idx >> levels;
 }
 
@@ -31,7 +31,7 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
 
   std::string line;
   route_idx_t current_idx{0U};
-  cista::base_t<cell_idx_t> n_cells_{0U};
+  std::uint32_t n_cells_{0U};
   while (std::getline(ifs, line)) {
     if (line.empty()) {
       break;
@@ -41,7 +41,8 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
     route_to_cell_idx_.at(current_idx) = assigned_cell;
     ++current_idx;
 
-    n_cells_ = std::max(n_cells_, static_cast<uint16_t>(assigned_cell.v_ + 1));
+    n_cells_ = std::max(n_cells_, static_cast<std::uint32_t>(assigned_cell.v_) + 1);
+    utl::verify(n_cells_ <= std::numeric_limits<std::uint16_t>::max(), "Only support up to 2^16 - 1 many cells in lowest level");
   }
 
   if (n_cells_ == 0U) {
@@ -52,7 +53,7 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
     throw utl::fail("we only support partitions with number of cells being a power of 2! Got {} cells", n_cells_);
   }
 
-  n_levels_ = static_cast<cista::base_t<cell_idx_t>>(std::bit_width(n_cells_) - 1);
+  n_levels_ = static_cast<std::uint8_t>(std::bit_width(n_cells_) - 1);
   assign_cells_to_components(tt);
 }
 
@@ -84,12 +85,12 @@ void route_partition::assign_cells_to_components(timetable const& tt) {
     component_cell_idxs.emplace_back(cell_idxs);
   }
 
-  for (std::uint16_t level = 0U; level <= n_levels_; ++level) {
+  for (std::uint16_t level = 0U; level <= static_cast<std::uint16_t>(n_levels_); ++level) {
 
     for (auto c = component_idx_t{0}; c < n_components; ++c) {
       if (auto& cell_idxs = component_cell_idxs[to_idx(c)];
           cell_idxs.size() == 1) {
-        cmpnt_to_cell_idx_[c] = global_cell_idx{cell_idxs.front(), level};
+        cmpnt_to_cell_idx_[c] = global_cell_idx{cell_idxs.front(), static_cast<std::uint8_t>(level)};
         cell_idxs.clear();
       }
     }
@@ -104,12 +105,12 @@ void route_partition::assign_cells_to_components(timetable const& tt) {
   }
 }
 
-cista::base_t<cell_idx_t> route_partition::get_num_of_cells_on_level(cista::base_t<cell_idx_t> const level) const {
+std::uint16_t route_partition::get_num_of_cells_on_level(std::uint8_t const level) const {
   assert(n_levels_ >= level);
-  return static_cast<cista::base_t<cell_idx_t>>(1U << (n_levels_ - level));
+  return static_cast<std::uint16_t>(1U << (n_levels_ - level));
 }
 
-cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint16_t level) const {
+cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint8_t level) const {
   return route_to_cell_idx_.at(r_idx) >> level;
 }
 

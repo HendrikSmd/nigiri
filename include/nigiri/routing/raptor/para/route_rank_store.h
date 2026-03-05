@@ -11,7 +11,7 @@ struct route_rank_store {
   void                                          write(std::filesystem::path const&) const;
   void                                          print_summary(std::ostream&) const;
 
-  vector_map<route_idx_t, interval<std::uint32_t>> route_rank_ranges_;
+  vector_map<route_idx_t, std::uint32_t> route_rank_start_idx_;
   vector<rank_t> ranks_;
   route_partition partition_;
 };

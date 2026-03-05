@@ -22,7 +22,7 @@ struct customizer {
   struct thread_task {
     thread_task(cell_idx_t const cell_idx,
                 component_idx_t const component_idx,
-                cista::base_t<cell_idx_t> const level,
+                std::uint8_t const level,
                 std::vector<bin_range_t>::const_iterator const iter) :
     cell_idx_(cell_idx),
     component_idx_(component_idx),
@@ -31,7 +31,7 @@ struct customizer {
 
     cell_idx_t cell_idx_;
     component_idx_t component_idx_;
-    cista::base_t<cell_idx_t> level_;
+    std::uint8_t level_;
     std::vector<bin_range_t>::const_iterator iter_;
   };
 
@@ -55,14 +55,14 @@ struct customizer {
   void cut_routing_task(const thread_task& task, bmc_raptor_state& state);
   void cut_routing_task(const thread_task& task, mc_raptor_state& state);
   void update_ranks_for(journey const& j,
-                        cista::base_t<cell_idx_t> level,
+                        std::uint8_t level,
                         cell_idx_t cell);
 
   void backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
                                   bmc_raptor_state const& state,
                                   unsigned k,
                                   location_idx_t target,
-                                  cista::base_t<cell_idx_t> level,
+                                  std::uint8_t level,
                                   cell_idx_t cell,
                                   component_idx_t component_idx);
   void log_progress() const;

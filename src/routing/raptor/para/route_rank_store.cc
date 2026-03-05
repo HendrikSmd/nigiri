@@ -3,7 +3,7 @@
 namespace nigiri::routing::para {
 
 auto route_rank_store::cista_members() {
-  return std::tie(route_rank_ranges_, ranks_, partition_);
+  return std::tie(route_rank_start_idx_, ranks_, partition_);
 }
 
 cista::wrapped<route_rank_store> route_rank_store::read(std::filesystem::path const& path) {
@@ -18,9 +18,10 @@ void route_rank_store::print_summary(std::ostream&) const {
   std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
   std::vector<size_t> transfer_rank_counts(partition_.n_levels_ + 1, 0ULL);
 
-  auto const n_routes = route_rank_ranges_.size();
+  auto const n_routes = route_rank_start_idx_.size();
   for (auto r = route_idx_t{0}; r < n_routes; ++r) {
-    const auto [r_from, r_to] = route_rank_ranges_[r];
+    const auto r_from = route_rank_start_idx_[r];
+    const auto r_to = route_rank_start_idx_[r + 1];
     route_rank_counts[to_idx(ranks_[r_from])]++;
 
     for (auto r_rank_idx = r_from + 1; r_rank_idx < r_to; ++r_rank_idx) {
@@ -28,7 +29,7 @@ void route_rank_store::print_summary(std::ostream&) const {
     }
   }
 
-  const auto n_transfers = ranks_.size() - route_rank_ranges_.size();
+  const auto n_transfers = ranks_.size() - (route_rank_start_idx_.size() - 1);
 
   std::cout << "Counts per rank: " << std::endl;
   for (size_t rank = 0U; rank <= partition_.n_levels_; ++rank) {

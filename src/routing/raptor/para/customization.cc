@@ -27,8 +27,8 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
 
   std::atomic_bool level_finished{false};
   initialize(partition);
-  for (cista::base_t<cell_idx_t> level = 0U; level <= partition.n_levels_; ++level) {
-    log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(level), level);
+  for (std::uint16_t level = 0U; level <= static_cast<std::uint16_t>(partition.n_levels_); ++level) {
+    log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)), level);
 
     level_finished.store(false);
     std::thread logger_thread([&] {
@@ -43,7 +43,7 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
     });
 
     std::vector<thread_task> tasks;
-    for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(level); ++cell_idx) {
+    for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)); ++cell_idx) {
       auto cut_cmpnt_bin_range_iter = start_times_registry_.cell_cmpnt_search_bins_[to_idx(cell_idx)].cbegin();
       cell_cut_cmpnts_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
         tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cut_cmpnt_bin_range_iter);
@@ -83,17 +83,18 @@ void customizer::log_progress() const {
 
 void customizer::initialize_ranks() {
   route_rank_store_.ranks_.clear();
-  route_rank_store_.route_rank_ranges_.clear();
+  route_rank_store_.route_rank_start_idx_.clear();
 
   for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
     const auto route_range_begin = route_rank_store_.ranks_.size();
     const auto n_stops = tt_.route_location_seq_[route_idx].size();
     const auto n_route_rank_entries = 1 + ((2 * n_stops) - 2);
-    const auto route_range_end = route_range_begin + n_route_rank_entries;
 
-    route_rank_store_.route_rank_ranges_.emplace_back(route_range_begin, route_range_end);
+    route_rank_store_.route_rank_start_idx_.emplace_back(route_range_begin);
     route_rank_store_.ranks_.resize(route_rank_store_.ranks_.size() + n_route_rank_entries, rank_t{0U});
   }
+  //Sentinel
+  route_rank_store_.route_rank_start_idx_.emplace_back(route_rank_store_.ranks_.size());
 }
 
 void customizer::initialize(route_partition const& p) {
@@ -356,7 +357,7 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
                                             bmc_raptor_state const& state,
                                             const unsigned k,
                                             location_idx_t const target,
-                                            cista::base_t<cell_idx_t> const level,
+                                            std::uint8_t const level,
                                             cell_idx_t const cell,
                                             component_idx_t) {
   auto& used_transfers_bv = used_transfers_[to_idx(cell)];
@@ -388,7 +389,7 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
     used_transfers_bv.set(to_idx(target_loc), true);
 
     if (route_idx != to_idx(route_idx_t::invalid())) {
-      auto const [from, _] = route_rank_store_.route_rank_ranges_[route_idx_t{route_idx}];
+      auto const from = route_rank_store_.route_rank_start_idx_[route_idx_t{route_idx}];
       const unsigned dep_route_rank_off = 1 + (enter_stop_idx * 2);
       const unsigned arr_route_rank_off = (exit_stop_idx * 2);
       route_rank_store_.ranks_[from] = rank_t{level + 1};
@@ -557,7 +558,7 @@ inline bool uses_transport(const journey::leg& l) {
 }
 
 void customizer::update_ranks_for(journey const& j,
-                                  cista::base_t<cell_idx_t> const level,
+                                  std::uint8_t const level,
                                   cell_idx_t const cell) {
   auto& used_transfers_bv = used_transfers_[to_idx(cell)];
   for (const auto& leg : j.legs_) {
@@ -570,7 +571,7 @@ void customizer::update_ranks_for(journey const& j,
       // make sure our journey does not contain a leg that
       // uses a route we masked out
       assert(route_masks_[to_idx(cell)][to_idx(route_idx)]);
-      auto const [from, _] = route_rank_store_.route_rank_ranges_[route_idx];
+      auto const from = route_rank_store_.route_rank_start_idx_[route_idx];
       auto const [from_stop, to_stop_exclusive] = run.stop_range_;
       const unsigned dep_route_rank_off = 1 + (from_stop * 2);
       const unsigned arr_route_rank_off = ((to_stop_exclusive-1) * 2);
