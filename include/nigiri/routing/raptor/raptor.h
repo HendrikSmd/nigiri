@@ -460,10 +460,10 @@ private:
           section_car_filter = true;
         }
       }
-      /*
+
       if constexpr (algo_version == version::kPara) {
         auto const& r_store = *rank_store_;
-        const auto [r_from, _] = r_store.route_rank_ranges_[r];
+        const auto r_from = r_store.route_rank_start_idx_[r];
         if (auto const route_rank = r_store.ranks_[r_from];
             route_rank < start_lcls_[to_idx(r)] &&
             route_rank < dest_lcls_[to_idx(r)]) {
@@ -471,7 +471,7 @@ private:
           return;
         }
       }
-      */
+
       ++stats_.n_routes_visited_;
       trace("┊ ├k={} updating route {}\n", k, r);
       any_marked |=
@@ -1033,7 +1033,7 @@ private:
               k, v, stop_idx, loc{tt_, location_idx_t{l_idx}});
           continue;
         }
-        /*
+
         if constexpr (algo_version == version::kPara) {
           if (auto transfer_rank =
                   rank_store_->ranks_[r_ranks_from + (i * 2)];
@@ -1043,7 +1043,7 @@ private:
             break;
               }
         }
-        */
+
 
 
 
