@@ -27,9 +27,11 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
 
   std::atomic_bool level_finished{false};
   initialize(partition);
+  std::vector<std::atomic<std::uint8_t>> atomic_ranks(route_rank_store_.ranks_.size());
+  std::vector<std::atomic<size_t>> cell_progress(partition.get_num_of_cells_on_level(0U));
   for (std::uint16_t level = 0U; level <= static_cast<std::uint16_t>(partition.n_levels_); ++level) {
     log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)), level);
-
+    std::ranges::fill(cell_progress, 0U);
     level_finished.store(false);
     std::thread logger_thread([&] {
       while (true) {
@@ -38,7 +40,7 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
           return;
         }
 
-        log_progress();
+        log_progress(cell_progress);
       }
     });
 
@@ -46,37 +48,44 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)); ++cell_idx) {
       auto cut_cmpnt_bin_range_iter = start_times_registry_.cell_cmpnt_search_bins_[to_idx(cell_idx)].cbegin();
       cell_cut_cmpnts_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
-        tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cut_cmpnt_bin_range_iter);
+        tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cut_cmpnt_bin_range_iter, atomic_ranks);
         ++cut_cmpnt_bin_range_iter;
       });
     }
     if constexpr (search_algo == search_algorithm::mc_raptor) {
       utl::parallel_for_run_threadlocal<mc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
-        this->cut_routing_task(tasks[t_idx], state);
+        this->cut_routing_task(tasks[t_idx], state, cell_progress);
       });
     } else {
       utl::parallel_for_run_threadlocal<bmc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
-        this->cut_routing_task(tasks[t_idx], state);
+        this->cut_routing_task(tasks[t_idx], state, cell_progress);
       });
     }
     level_finished.store(true);
     logger_thread.join();
+
+    mark_updated_routes_and_used_transfers(atomic_ranks, partition, static_cast<std::uint8_t>(level));
     prepare_next_level();
     if (std::ranges::all_of(cell_cut_cmpnts_, [](const bitvec& bv){return !bv.any();})) {
       log(log_lvl::info, "customization", "No more cut components. Terminating shortly");
-      log_progress();
       break;
     }
   }
-
+  materialize_atomic_ranks(atomic_ranks);
   route_rank_store_.partition_ = std::move(partition);
   return route_rank_store_;
 }
 
-void customizer::log_progress() const {
+void customizer::log_progress(std::vector<std::atomic<size_t>> const& cell_progress) const {
     std::cout << "Progress Update:\n";
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < static_cast<cista::base_t<cell_idx_t>>(cell_cut_cmpnts_.size()); ++cell_idx) {
-      std::cout << "Cell " << cell_idx << ": " << cell_progress_[cista::to_idx(cell_idx)] << "/" << cell_cut_cmpnts_[cista::to_idx(cell_idx)].count() << std::endl;
+      const size_t progress = cell_progress[to_idx(cell_idx)];
+      const auto limit = cell_cut_cmpnts_[cista::to_idx(cell_idx)].count();
+      if (progress == 0) {
+        continue;
+      }
+      std::cout << "Cell " << cell_idx << ": " << progress << "/" << limit
+      << ((progress == limit) ? " ✓" : "") <<std::endl;
     }
     std::cout << std::endl;
 }
@@ -99,13 +108,7 @@ void customizer::initialize_ranks() {
 
 void customizer::initialize(route_partition const& p) {
   auto const timer = scoped_timer("initializing customization process");
-
   auto n_of_cells_on_first_lvl = p.get_num_of_cells_on_level(0U);
-  cell_mutexes_.clear();
-  cell_mutexes_.resize(n_of_cells_on_first_lvl);
-
-  cell_progress_.clear();
-  cell_progress_.resize(n_of_cells_on_first_lvl, 0U);
 
   updated_routes_.clear();
   route_masks_.clear();
@@ -179,8 +182,7 @@ void customizer::prepare_next_level() {
   assert(std::has_single_bit(route_masks_.size()));
   assert(route_masks_.size() == updated_routes_.size());
 
-  auto n_cells_in_next_level = route_masks_.size() >> 1U;
-  cell_mutexes_.resize(n_cells_in_next_level);
+  auto const n_cells_in_next_level = route_masks_.size() >> 1U;
 
   // 1. update route masks
   // we only need to consider marked routes
@@ -211,8 +213,6 @@ void customizer::prepare_next_level() {
   start_times_registry_.populate(tt_, n_cells_in_next_level,
                                  cmpnt_to_current_lvl_cell_idxs_,
                                  route_masks_, !use_initial_footpaths);
-
-  std::ranges::fill(cell_progress_, 0U);
 }
 
 inline void binary_or_reduce(std::vector<bitvec>& vec) {
@@ -243,7 +243,9 @@ void customizer::unite_cut_cmpnts() {
   binary_or_reduce(cell_cut_cmpnts_);
 }
 
-void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc_state) {
+void customizer::cut_routing_task(const thread_task& task,
+                                  bmc_raptor_state& bmc_state,
+                                  std::vector<std::atomic<size_t>>& cell_progress) {
 #ifdef NIGIRI_ENABLE_SIMD
   bmc_round_meta_data initial_md{
     .route_idx_ = 0U,
@@ -327,7 +329,6 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
 
 
     raptor.rounds();
-    std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
 
     std::vector<bmc_journey> bmc_journey_bag;
     cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
@@ -340,7 +341,8 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
                                    location_idx_t{i},
                                    level,
                                    cell,
-                                   cut_cmpnt_from);
+                                   cut_cmpnt_from,
+                                   task.atomic_ranks_);
       }
 
 
@@ -349,25 +351,23 @@ void customizer::cut_routing_task(const thread_task& task, bmc_raptor_state& bmc
 
     bmc_state.reset();
   }
-  std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
-  cell_progress_[to_idx(cell)]++;
+  ++cell_progress[to_idx(cell)];
 }
 
 void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
                                             bmc_raptor_state const& state,
                                             const unsigned k,
-                                            location_idx_t const target,
+                                            location_idx_t,
                                             std::uint8_t const level,
-                                            cell_idx_t const cell,
-                                            component_idx_t) {
-  auto& used_transfers_bv = used_transfers_[to_idx(cell)];
+                                            cell_idx_t,
+                                            component_idx_t,
+                                            std::vector<std::atomic<std::uint8_t>>& atomic_ranks) {
 #ifdef NIGIRI_ENABLE_SIMD
   auto current_label = (*root_label).metadata_;
 #else
   auto current_label = root_label->label_;
 #endif
   auto current_k = k;
-  auto target_loc = target;
 
   while (current_label.has_parent_ == 1U) {
     const auto route_idx = current_label.route_idx_;
@@ -379,25 +379,18 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
 
 
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
-    auto const exit_stp = stop{stop_sequence[exit_stop_idx]};
 
     auto const enter_loc_idx = cista::to_idx(enter_stp.location_idx());
-    auto const exit_loc_idx = cista::to_idx(exit_stp.location_idx());
 
-    used_transfers_bv.set(enter_loc_idx, true);
-    used_transfers_bv.set(exit_loc_idx, true);
-    used_transfers_bv.set(to_idx(target_loc), true);
+
 
     if (route_idx != to_idx(route_idx_t::invalid())) {
       auto const from = route_rank_store_.route_rank_start_idx_[route_idx_t{route_idx}];
       const unsigned dep_route_rank_off = 1 + (enter_stop_idx * 2);
       const unsigned arr_route_rank_off = (exit_stop_idx * 2);
-      route_rank_store_.ranks_[from] = rank_t{level + 1};
-      route_rank_store_.ranks_[from + dep_route_rank_off] = rank_t{level + 1};
-      route_rank_store_.ranks_[from + arr_route_rank_off] = rank_t{level + 1};
-
-      // mark route as updated for the next level
-      updated_routes_[to_idx(cell)].set(route_idx, true);
+      atomic_ranks[from].store(level + 1);
+      atomic_ranks[from + dep_route_rank_off].store(level + 1);
+      atomic_ranks[from + arr_route_rank_off].store(level + 1);
     }
 #ifdef NIGIRI_ENABLE_SIMD
     current_label = state.round_bags_[current_k - 1][enter_loc_idx].meta_data_[current_label.parent_bag_idx_];
@@ -405,11 +398,12 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
     current_label = state.round_bags_[current_k - 1][enter_loc_idx].labels_[current_label.parent_bag_idx_].label_;
 #endif
     current_k--;
-    target_loc = location_idx_t{enter_loc_idx};
   }
 }
 
-void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& state) {
+void customizer::cut_routing_task(const thread_task& task,
+                                  mc_raptor_state& state,
+                                  std::vector<std::atomic<size_t>>& cell_progress) {
   const auto cut_cmpnt_from = task.component_idx_;
   const auto cell = task.cell_idx_;
   const auto level = task.level_;
@@ -445,7 +439,6 @@ void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& stat
     }
 
     raptor.route();
-    std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
     for (const auto& journeys : state.results_) {
       for (const auto& j : journeys) {
         update_ranks_for(j, level, cell);
@@ -489,8 +482,7 @@ void customizer::cut_routing_task(const thread_task& task, mc_raptor_state& stat
     state.reset();
   }
   */
-  std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
-  cell_progress_[to_idx(cell)]++;
+  ++cell_progress[to_idx(cell)];
 }
 
 void customizer::append_cmpnt_cell_idxs(route_partition const& partition,
@@ -559,11 +551,8 @@ inline bool uses_transport(const journey::leg& l) {
 
 void customizer::update_ranks_for(journey const& j,
                                   std::uint8_t const level,
-                                  cell_idx_t const cell) {
-  auto& used_transfers_bv = used_transfers_[to_idx(cell)];
+                                  cell_idx_t) {
   for (const auto& leg : j.legs_) {
-    used_transfers_bv.set(to_idx(leg.from_), true);
-    used_transfers_bv.set(to_idx(leg.to_), true);
     if (uses_transport(leg)) {
       const auto& run = std::get<journey::run_enter_exit>(leg.uses_);
       const auto transport_idx = run.r_.t_.t_idx_;
@@ -578,10 +567,57 @@ void customizer::update_ranks_for(journey const& j,
       route_rank_store_.ranks_[from] = rank_t{level + 1};
       route_rank_store_.ranks_[from + dep_route_rank_off] = rank_t{level + 1};
       route_rank_store_.ranks_[from + arr_route_rank_off] = rank_t{level + 1};
-
-      // mark route as updated for the next level
-      updated_routes_[to_idx(cell)].set(to_idx(route_idx), true);
     }
+  }
+}
+
+void customizer::mark_updated_routes_and_used_transfers(
+    std::vector<std::atomic<std::uint8_t>> const& atomic_ranks,
+    route_partition const& partition,
+    std::uint8_t const level) {
+  auto timer = scoped_timer("marking updated routes and used transfers");
+
+  for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
+    const auto cell_idx = partition.get_cell_of_route(route_idx, level);
+    const auto from_idx = route_rank_store_.route_rank_start_idx_[route_idx];
+    if (atomic_ranks[from_idx] == level + 1) {
+      updated_routes_[to_idx(cell_idx)].set(to_idx(route_idx), true);
+    } else {
+      continue;
+    }
+
+    auto base = from_idx + 1;
+    const auto stop_seq = tt_.route_location_seq_[route_idx];
+    for (auto i = 0U; i < stop_seq.size(); ++i) {
+      location_idx_t stop_loc = stop{stop_seq[i]}.location_idx();
+      if (to_idx(cell_idx) == 0 && to_idx(stop_loc) == 19274) {
+        std::cout << route_idx << std::endl;
+        utl::fail("Failed");
+      }
+      if (i == 0 || i == stop_seq.size() - 1) {
+        if (atomic_ranks[base] == level + 1) {
+          used_transfers_[to_idx(cell_idx)].set(to_idx(stop_loc), true);
+        }
+        ++base;
+        continue;
+      }
+
+      if (atomic_ranks[base] == level + 1 || atomic_ranks[base + 1] == level + 1) {
+        used_transfers_[to_idx(cell_idx)].set(to_idx(stop_loc), true);
+      }
+
+      base += 2;
+    }
+  }
+}
+
+void customizer::materialize_atomic_ranks(std::vector<std::atomic<std::uint8_t>> const& atomic_ranks) {
+  auto timer = scoped_timer("materializing atomic ranks");
+  utl::verify(atomic_ranks.size() == route_rank_store_.ranks_.size(),
+              "atomic ranks do not have the same size as route rank store ranks");
+
+  for (auto i = 0U; i < atomic_ranks.size(); ++i) {
+    route_rank_store_.ranks_[i] = rank_t{atomic_ranks[i]};
   }
 }
 

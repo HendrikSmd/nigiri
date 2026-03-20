@@ -23,16 +23,19 @@ struct customizer {
     thread_task(cell_idx_t const cell_idx,
                 component_idx_t const component_idx,
                 std::uint8_t const level,
-                std::vector<bin_range_t>::const_iterator const iter) :
+                std::vector<bin_range_t>::const_iterator const iter,
+                std::vector<std::atomic<std::uint8_t>>& atomic_ranks) :
     cell_idx_(cell_idx),
     component_idx_(component_idx),
     level_{level},
-    iter_(iter) {}
+    iter_(iter),
+    atomic_ranks_(atomic_ranks) {}
 
     cell_idx_t cell_idx_;
     component_idx_t component_idx_;
     std::uint8_t level_;
     std::vector<bin_range_t>::const_iterator iter_;
+    std::vector<std::atomic<std::uint8_t>>& atomic_ranks_;
   };
 
   customizer(timetable const& tt);
@@ -52,8 +55,10 @@ struct customizer {
                               std::vector<std::vector<cell_idx_t>>& cmpnt_to_cell_idxs);
   void update_cmpnt_cell_idxs_next_level();
 
-  void cut_routing_task(const thread_task& task, bmc_raptor_state& state);
-  void cut_routing_task(const thread_task& task, mc_raptor_state& state);
+  void cut_routing_task(thread_task const& task, bmc_raptor_state& state,
+                        std::vector<std::atomic<size_t>>& cell_progress);
+  void cut_routing_task(thread_task const& task, mc_raptor_state& state,
+                        std::vector<std::atomic<size_t>>& cell_progress);
   void update_ranks_for(journey const& j,
                         std::uint8_t level,
                         cell_idx_t cell);
@@ -64,8 +69,16 @@ struct customizer {
                                   location_idx_t target,
                                   std::uint8_t level,
                                   cell_idx_t cell,
-                                  component_idx_t component_idx);
-  void log_progress() const;
+                                  component_idx_t component_idx,
+                                  std::vector<std::atomic<std::uint8_t>>& atomic_ranks);
+  void log_progress(std::vector<std::atomic<size_t>> const& cell_progress) const;
+
+  void mark_updated_routes_and_used_transfers(
+    std::vector<std::atomic<std::uint8_t>> const& atomic_ranks,
+    route_partition const& partition,
+    std::uint8_t level);
+
+  void materialize_atomic_ranks(std::vector<std::atomic<std::uint8_t>> const& atomic_ranks);
 
   const timetable& tt_;
 
@@ -83,12 +96,6 @@ struct customizer {
 
   // Results
   route_rank_store route_rank_store_;
-
-  // Threads
-  std::deque<std::mutex> cell_mutexes_;
-
-  // Progress
-  std::vector<size_t> cell_progress_;
 };
 
 } // namespace nigiri::routing::para
