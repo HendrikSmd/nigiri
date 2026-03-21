@@ -5,7 +5,7 @@
 
 #include "boost/asio/thread_pool.hpp"
 #include "utl/zip.h"
-#include "utl/parallel_for.h"
+#include "nigiri/common/parallel_for_with_args.h"
 #include "nigiri/loader/gtfs/route.h"
 
 #include "nigiri/routing/raptor/para/mc_raptor.h"
@@ -57,9 +57,9 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
         this->cut_routing_task(tasks[t_idx], state, cell_progress);
       });
     } else {
-      utl::parallel_for_run_threadlocal<bmc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
-        this->cut_routing_task(tasks[t_idx], state, cell_progress);
-      });
+      parallel_for_run_threadlocal<local_thread_context>(tasks.size(), [&](auto& context, auto const t_idx) {
+        this->cut_routing_task(tasks[t_idx], context, cell_progress);
+      }, utl::noop_progress_update{}, utl::parallel_error_strategy::QUIT_EXEC, std::ref(tt_));
     }
     level_finished.store(true);
     logger_thread.join();
@@ -244,7 +244,7 @@ void customizer::unite_cut_cmpnts() {
 }
 
 void customizer::cut_routing_task(const thread_task& task,
-                                  bmc_raptor_state& bmc_state,
+                                  local_thread_context& context,
                                   std::vector<std::atomic<size_t>>& cell_progress) {
 #ifdef NIGIRI_ENABLE_SIMD
   bmc_round_meta_data initial_md{
@@ -261,21 +261,25 @@ void customizer::cut_routing_task(const thread_task& task,
   const auto cell = task.cell_idx_;
   const auto level = task.level_;
 
+  if (context.last_cell_idx_ != cell) {
+    context.tt_view_.index(route_masks_[to_idx(cell)]);
+  }
+
   const auto [bin_from, bin_to] = *task.iter_;
 
   const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
   for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
     const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i];
     const auto bin_end_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i + 1];
-    bmc_raptor raptor{tt_,
-                      bmc_state,
+    bmc_raptor raptor{context.tt_view_,
+                      context.state_,
                       cell_cut_stops_[to_idx(cell)],
-                      route_masks_[to_idx(cell)],
                       transfer_masks_[to_idx(cell)]};
 
     for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
       const auto& rel_dep_event = start_times_registry_.cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
-      const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
+      const location_idx_t from_loc_source_idx = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
+      const location_idx_view_t from_loc_view_idx = context.tt_view_.get_view_idx(from_loc_source_idx);
 
       search_bitfield sbf;
       truncate_to(rel_dep_event.active_days_, sbf);
@@ -298,7 +302,7 @@ void customizer::cut_routing_task(const thread_task& task,
       }
 #else
       bool added = bmc_raptor::add_to_non_dest_round_bag(
-          bmc_state.round_bags_[0U][to_idx(from_loc)],
+          context.state_.round_bags_[0U][to_idx(from_loc_view_idx)],
           {.route_idx_ = 0U,
            .enter_stop_idx_ = 0U,
            .exit_stop_idx_ = 0U,
@@ -311,7 +315,7 @@ void customizer::cut_routing_task(const thread_task& task,
           sbf);
       if (added) {
         bmc_raptor::add_to_non_dest_round_bag(
-            bmc_state.best_bags_[to_idx(from_loc)],
+            context.state_.best_bags_[to_idx(from_loc_view_idx)],
             {.route_idx_ = 0U,
              .enter_stop_idx_ = 0U,
              .exit_stop_idx_ = 0U,
@@ -322,7 +326,7 @@ void customizer::cut_routing_task(const thread_task& task,
              .is_footpath_ = 0,
              .has_parent_ = 0},
             sbf);
-        bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
+        context.state_.station_mark_.set(cista::to_idx(from_loc_view_idx), true);
       }
 #endif
     }
@@ -332,11 +336,19 @@ void customizer::cut_routing_task(const thread_task& task,
 
     std::vector<bmc_journey> bmc_journey_bag;
     cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
-      raptor.emplace_relative_journeys_for(location_idx_t{i}, bmc_journey_bag);
+      const location_idx_t destination_loc_idx = location_idx_t{i};
+      location_idx_view_t const destination_loc_view_idx =
+          context.tt_view_.get_view_idx(destination_loc_idx);
+
+      if (destination_loc_view_idx == location_idx_view_t::invalid()) {
+        return;
+      }
+
+      raptor.emplace_relative_journeys_for(destination_loc_view_idx, bmc_journey_bag);
 
       for (const auto& bmc_j : bmc_journey_bag) {
         backtrack_and_update_ranks(bmc_j.label_iter_,
-                                   bmc_state,
+                                   context,
                                    bmc_j.transfers_ + 1,
                                    location_idx_t{i},
                                    level,
@@ -349,13 +361,14 @@ void customizer::cut_routing_task(const thread_task& task,
       bmc_journey_bag.clear();
     });
 
-    bmc_state.reset();
+    context.state_.reset();
   }
+  context.last_cell_idx_ = cell;
   ++cell_progress[to_idx(cell)];
 }
 
 void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
-                                            bmc_raptor_state const& state,
+                                            local_thread_context const& context,
                                             const unsigned k,
                                             location_idx_t,
                                             std::uint8_t const level,
@@ -380,7 +393,10 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
 
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
 
-    auto const enter_loc_idx = cista::to_idx(enter_stp.location_idx());
+    auto const enter_loc_idx = enter_stp.location_idx();
+    auto const enter_loc_view_idx = context.tt_view_.get_view_idx(enter_loc_idx);
+    utl::verify(enter_loc_view_idx != location_idx_view_t::invalid(),
+               "Unmapped location while backtracking");
 
 
 
@@ -393,9 +409,14 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
       atomic_ranks[from + arr_route_rank_off].store(level + 1);
     }
 #ifdef NIGIRI_ENABLE_SIMD
-    current_label = state.round_bags_[current_k - 1][enter_loc_idx].meta_data_[current_label.parent_bag_idx_];
+    current_label =
+        context.state_.round_bags_[current_k - 1][to_idx(enter_loc_view_idx)]
+            .meta_data_[current_label.parent_bag_idx_];
 #else
-    current_label = state.round_bags_[current_k - 1][enter_loc_idx].labels_[current_label.parent_bag_idx_].label_;
+    current_label =
+        context.state_.round_bags_[current_k - 1][to_idx(enter_loc_view_idx)]
+            .labels_[current_label.parent_bag_idx_]
+            .label_;
 #endif
     current_k--;
   }

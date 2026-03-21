@@ -4,6 +4,7 @@
 
 #include "bmc_raptor_state.h"
 #include "routing_time.h"
+#include "timetable_view.h"
 
 namespace nigiri::routing::para {
 
@@ -19,9 +20,8 @@ struct bmc_journey {
 
 struct bmc_raptor {
 
-  bmc_raptor(timetable const& tt, bmc_raptor_state& state,
-             bitvec const& destination_mask, bitvec const& route_mask,
-             bitvec const& transfer_mask);
+  bmc_raptor(timetable_view const& tt_view, bmc_raptor_state& state,
+             bitvec const& destination_mask, bitvec const& transfer_mask);
 
 #ifdef NIGIRI_ENABLE_SIMD
   static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
@@ -65,9 +65,10 @@ struct bmc_raptor {
 
   static bitset<kMaxDays> get_tt_day_mask(timetable const& tt);
 
-  void init_starts(location_idx_t location_idx, bool use_initial_fp);
+  void init_starts(location_idx_view_t location_idx,
+                   bool use_initial_fp);
 
-  void init_location_with_offset(location_idx_t location_idx,
+  void init_location_with_offset(location_idx_view_t location_idx_view,
                                  duration_t minutes_to_arrive);
 
   void get_earliest_sufficient_transports(
@@ -81,14 +82,13 @@ struct bmc_raptor {
   void gather_journeys();
   static unsigned end_k();
 
-  void emplace_relative_journeys_for(location_idx_t location_idx,
+  void emplace_relative_journeys_for(location_idx_view_t location_view_idx,
                                      std::vector<bmc_journey>& bag);
 
-  timetable const& tt_;
+  timetable_view const& tt_view_;
   bmc_raptor_state& state_;
-  bitvec const& destination_mask_;
-  bitvec const& route_mask_;
-  bitvec const& transfer_mask_;
+  bitvec const& destination_mask_; // Indexed by source location_idx_t
+  bitvec const& transfer_mask_;    // Indexed by source location_idx_t
   bitset<kMaxDays> const tt_day_mask_;
 };
 

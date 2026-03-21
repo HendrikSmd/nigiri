@@ -1,14 +1,15 @@
 #pragma once
 
-#include <deque>
-
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/routing/start_times.h"
 
+#include <deque>
+
 #include "bmc_raptor_state.h"
 #include "mc_raptor_state.h"
-#include "start_times_registry.h"
 #include "route_rank_store.h"
+#include "start_times_registry.h"
+#include "timetable_view.h"
 
 namespace nigiri::routing::para {
 
@@ -38,6 +39,17 @@ struct customizer {
     std::vector<std::atomic<std::uint8_t>>& atomic_ranks_;
   };
 
+  struct local_thread_context {
+
+    local_thread_context(timetable const& tt) :
+      last_cell_idx_(cell_idx_t::invalid()),
+      tt_view_(tt) {}
+
+    cell_idx_t last_cell_idx_;
+    timetable_view tt_view_;
+    bmc_raptor_state state_{};
+  };
+
   customizer(timetable const& tt);
 
   route_rank_store const& construct_route_rank_store(route_partition partition);
@@ -55,7 +67,7 @@ struct customizer {
                               std::vector<std::vector<cell_idx_t>>& cmpnt_to_cell_idxs);
   void update_cmpnt_cell_idxs_next_level();
 
-  void cut_routing_task(thread_task const& task, bmc_raptor_state& state,
+  void cut_routing_task(thread_task const& task, local_thread_context& state,
                         std::vector<std::atomic<size_t>>& cell_progress);
   void cut_routing_task(thread_task const& task, mc_raptor_state& state,
                         std::vector<std::atomic<size_t>>& cell_progress);
@@ -64,7 +76,7 @@ struct customizer {
                         cell_idx_t cell);
 
   void backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
-                                  bmc_raptor_state const& state,
+                                  local_thread_context const& context,
                                   unsigned k,
                                   location_idx_t target,
                                   std::uint8_t level,
