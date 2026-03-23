@@ -42,6 +42,58 @@ struct bmc_raptor {
                                  std::array<std::uint16_t, 3> const& label,
                                  search_bitfield& sbf);
 #else
+
+  template <auto dominates>
+  static void cleanup_after_footpaths_added(bmc_raptor_bag_t& bag) {
+    for (size_t fp_i = bag.labels_.size() - 1; fp_i > 0; --fp_i) {
+      const auto& fp_label = bag.labels_[fp_i];
+
+      if (fp_label.label_.is_footpath_ != 1) {
+        break;
+      }
+
+      if (fp_label.tdb_.none()) {
+        continue;
+      }
+
+      for (size_t round_i = fp_i;
+           round_i > 0; --round_i) {
+
+        auto& round_label = bag.labels_[round_i - 1];
+        if (round_label.tdb_.none()) {
+          continue;
+        }
+
+        if (dominates(fp_label.label_, round_label.label_)) {
+          round_label.tdb_ &= ~fp_label.tdb_;
+        }
+
+      }
+    }
+
+    std::erase_if(bag.labels_, [](const auto& label){ return label.tdb_.none(); });
+  }
+
+  static bool dominates_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+
+  static bool dominates_non_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+
+  static bool dominates(bmc_raptor_label const& l1, bmc_raptor_label const& l2) {
+    return l1.dominates_destination(l2);
+  }
+
+  static void cleanup_after_footpaths_at_dest(bmc_raptor_bag_t& bag);
+
+  static void cleanup_after_footpaths_at_non_dest(bmc_raptor_bag_t& bag);
+
+  static bool add_carefully_to_dest_round_bag(bmc_raptor_bag_t& bag,
+                                              const bmc_raptor_label& label,
+                                              search_bitfield sbf);
+
+  static bool add_carefully_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
+                                                  bmc_raptor_label const& label,
+                                                  search_bitfield sbf);
+
   static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
                                         const bmc_raptor_label& label,
                                         search_bitfield sbf);

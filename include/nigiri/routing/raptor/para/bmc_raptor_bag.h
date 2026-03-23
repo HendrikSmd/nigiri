@@ -10,7 +10,7 @@ struct bmc_raptor_bag {
   struct indexed_label {
     indexed_label() = default;
     indexed_label(T label, search_bitfield const tdb)
-        : label_(std::move(label)),
+        : label_(label),
           tdb_(tdb) {}
 
     T label_;
@@ -41,6 +41,22 @@ struct bmc_raptor_bag {
       labels_[i - n_removed] = labels_[i];
     }
     labels_.resize(labels_.size() - n_removed + 1);
+    labels_.back() = indexed_label{label, tdb};
+    return true;
+  }
+
+  template <auto dominates>
+  bool add_careful(T label, search_bitfield tdb) {
+    for (size_t i = 0U; i < labels_.size(); ++i) {
+      auto& el = labels_[i];
+      if (dominates(el.label_, label)) {
+        tdb &= ~el.tdb_;
+        if (!tdb.any()) {
+          return false;
+        }
+      }
+    }
+    labels_.resize(labels_.size() + 1);
     labels_.back() = indexed_label{label, tdb};
     return true;
   }

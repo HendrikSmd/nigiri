@@ -2,6 +2,7 @@
 
 #include "nigiri/routing/journey.h"
 #include "nigiri/routing/pareto_set.h"
+#include "nigiri/common/standard_flat_matrix.h"
 
 #include "bmc_raptor_bag.h"
 #include "bmc_raptor_label.h"
@@ -30,10 +31,10 @@ struct bmc_raptor_state {
   void reset();
 
   std::vector<bmc_raptor_bag_t> best_bags_;
-  cista::raw::flat_matrix<bmc_raptor_bag_t> round_bags_;
+  simple_flat_matrix<bmc_raptor_bag_t> round_bags_;
 
-  std::vector<std::vector<buffered_fp_label>> fps_buffers_;
   std::vector<pareto_set<journey>> results_;
+  bitvec fp_label_added_;
   bitvec station_mark_;
   bitvec prev_station_mark_;
   bitvec route_mark_;
