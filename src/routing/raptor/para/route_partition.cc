@@ -7,6 +7,7 @@
 #include <ranges>
 
 #include "cista/io.h"
+#include "utl/enumerate.h"
 
 namespace nigiri::routing::para {
 
@@ -23,14 +24,33 @@ cista::wrapped<route_partition> route_partition::read(std::filesystem::path cons
   return cista::read<route_partition>(path);
 }
 
-void route_partition::from_hmetis_result(std::filesystem::path const& path, timetable const& tt) {
+void route_partition::from_hmetis_result(std::filesystem::path const& path,
+                                         timetable const& tt) {
   auto const n_routes = tt.n_routes();
+  auto const n_directed_footpaths =
+      tt.locations_.footpaths_out_[kDefaultProfile].data_.size();
   route_to_cell_idx_.resize(n_routes, cell_idx_t::invalid());
+  footpath_to_cell_idx_.resize(n_directed_footpaths, cell_idx_t::invalid());
+
+  vector_map<footpath_idx_t, std::pair<location_idx_t, location_idx_t>>
+      undirected_fp_edges;
+  std::vector<std::vector<footpath_idx_t>> loc_incident_fps(tt.n_locations());
+  for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+    auto const loc_fps_out = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+    for (auto const& fp : loc_fps_out) {
+      if (loc < fp.target()) {
+        auto const next_index = footpath_idx_t{undirected_fp_edges.size()};
+        loc_incident_fps[to_idx(loc)].push_back(next_index);
+        loc_incident_fps[to_idx(fp.target())].push_back(next_index);
+        undirected_fp_edges.emplace_back(loc, fp.target());
+      }
+    }
+  }
 
   std::ifstream ifs(path, std::ifstream::in);
 
   std::string line;
-  route_idx_t current_idx{0U};
+  std::uint32_t current_connection_idx{0U};
   std::uint32_t n_cells_{0U};
   while (std::getline(ifs, line)) {
     if (line.empty()) {
@@ -38,64 +58,89 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
     }
 
     cell_idx_t assigned_cell{std::stol(line)};
-    route_to_cell_idx_.at(current_idx) = assigned_cell;
-    ++current_idx;
+    if (current_connection_idx < n_routes) {
+      route_to_cell_idx_.at(route_idx_t{current_connection_idx}) = assigned_cell;
+    } else {
+      auto const undirected_fp_idx =
+          footpath_idx_t{current_connection_idx - n_routes};
+      auto const fp_locations = undirected_fp_edges[undirected_fp_idx];
+      assign_cell_to_undirected_footpath(tt, fp_locations.first,
+                                         fp_locations.second, assigned_cell);
+      assign_cell_to_undirected_footpath(tt, fp_locations.second,
+                                   fp_locations.first, assigned_cell);
+    }
+    ++current_connection_idx;
 
     n_cells_ = std::max(n_cells_, static_cast<std::uint32_t>(assigned_cell.v_) + 1);
     utl::verify(n_cells_ <= std::numeric_limits<std::uint16_t>::max(), "Only support up to 2^16 - 1 many cells in lowest level");
   }
+
+  utl::verify(current_connection_idx == n_routes + (n_directed_footpaths >> 1),
+              "Unexpected number of lines received");
 
   if (n_cells_ == 0U) {
     throw utl::fail("partition is empty!");
   }
 
   if (!std::has_single_bit(n_cells_)) {
-    throw utl::fail("we only support partitions with number of cells being a power of 2! Got {} cells", n_cells_);
+    throw utl::fail(
+        "we only support partitions with number of cells being a power of 2! "
+        "Got {} cells",
+        n_cells_);
   }
 
   n_levels_ = static_cast<std::uint8_t>(std::bit_width(n_cells_) - 1);
-  assign_cells_to_components(tt);
+  assign_cells_to_locations(tt);
 }
 
-void route_partition::assign_cells_to_components(timetable const& tt) {
-  auto n_components= tt.component_locations_.size();
-  cmpnt_to_cell_idx_.resize(n_components,
-                            global_cell_idx{
-                              cell_idx_t::invalid(),
-                              std::numeric_limits<std::uint8_t>::max()
-                            });
-  std::vector<std::vector<cell_idx_t>> component_cell_idxs;
-  for (auto c = component_idx_t{0}; c < n_components; ++c) {
+void route_partition::assign_cells_to_locations(timetable const& tt) {
+  auto const n_locations = tt.n_locations();
+  location_to_cell_idx_.resize(
+      n_locations, global_cell_idx{cell_idx_t::invalid(),
+                                   std::numeric_limits<std::uint8_t>::max()});
+  std::vector<std::vector<cell_idx_t>> location_cell_idxs;
+  for (auto loc_idx = location_idx_t{0}; loc_idx < n_locations; ++loc_idx) {
 
     std::vector<cell_idx_t> cell_idxs;
-    for (const auto& loc : tt.component_locations_[c]) {
-      const auto& routes_of_loc = tt.location_routes_[loc];
+    const auto routes_of_loc = tt.location_routes_[loc_idx];
+    std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
+      return route_to_cell_idx_[r];
+    });
 
-      if (routes_of_loc.empty()) {
-        continue;
+    auto const loc_fps =
+    tt.locations_.footpaths_out_[kDefaultProfile][loc_idx];
+    auto const fp_base_idx = std::distance(
+        tt.locations_.footpaths_out_[kDefaultProfile].data_.begin(),
+        loc_fps.begin());
+    for (auto const [fp_offset, _] : utl::enumerate(loc_fps)) {
+      auto const fp_idx =
+          footpath_idx_t{static_cast<unsigned long>(fp_base_idx) + fp_offset};
+      if (auto const cell_idx = footpath_to_cell_idx_[fp_idx];
+          cell_idx != cell_idx_t::invalid()) {
+        cell_idxs.push_back(cell_idx);
+      } else {
+        utl::fail("Footpath not assigned to cell");
       }
-
-      std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
-        return route_to_cell_idx_[r];
-      });
     }
+
+
     std::ranges::sort(cell_idxs);
     auto last = std::unique(cell_idxs.begin(), cell_idxs.end());
     cell_idxs.erase(last, cell_idxs.end());
-    component_cell_idxs.emplace_back(cell_idxs);
+    location_cell_idxs.emplace_back(cell_idxs);
   }
 
   for (std::uint16_t level = 0U; level <= static_cast<std::uint16_t>(n_levels_); ++level) {
 
-    for (auto c = component_idx_t{0}; c < n_components; ++c) {
-      if (auto& cell_idxs = component_cell_idxs[to_idx(c)];
+    for (auto loc = location_idx_t{0}; loc < n_locations; ++loc) {
+      if (auto& cell_idxs = location_cell_idxs[to_idx(loc)];
           cell_idxs.size() == 1) {
-        cmpnt_to_cell_idx_[c] = global_cell_idx{cell_idxs.front(), static_cast<std::uint8_t>(level)};
+        location_to_cell_idx_[loc] = global_cell_idx{cell_idxs.front(), static_cast<std::uint8_t>(level)};
         cell_idxs.clear();
       }
     }
 
-    for (auto& cell_idxs : component_cell_idxs) {
+    for (auto& cell_idxs : location_cell_idxs) {
       std::ranges::transform(cell_idxs, cell_idxs.begin(), [](cell_idx_t const& cell_idx) {
         return get_parent_idx(cell_idx);
       });
@@ -110,8 +155,46 @@ std::uint16_t route_partition::get_num_of_cells_on_level(std::uint8_t const leve
   return static_cast<std::uint16_t>(1U << (n_levels_ - level));
 }
 
-cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint8_t level) const {
+cell_idx_t route_partition::get_cell_of_route(route_idx_t const r_idx, uint8_t const level) const {
   return route_to_cell_idx_.at(r_idx) >> level;
+}
+
+cell_idx_t route_partition::get_cell_of_footpath(footpath_idx_t const fp_idx, uint8_t const level) const {
+  return footpath_to_cell_idx_.at(fp_idx) >> level;
+}
+
+void route_partition::print_cells_of_location(timetable const& tt, location_idx_t const loc) const {
+  const auto routes_of_loc = tt.location_routes_[loc];
+  for (const auto r : routes_of_loc) {
+    std::cout << "Route " << r << ": " << route_to_cell_idx_[r] << std::endl;
+  }
+
+  const auto& out_fps = tt.locations_.footpaths_out_[kDefaultProfile];
+  const auto fps_of_loc = out_fps[loc];
+  const auto fp_base_idx = static_cast<std::uint32_t>(std::distance(out_fps.data_.begin(), fps_of_loc.begin()));
+  for (const auto [off, fp] : utl::enumerate(fps_of_loc)) {
+    std::cout << "Footpath to " << fp.target() << ": " << footpath_to_cell_idx_[footpath_idx_t{fp_base_idx + off}] << std::endl;
+  }
+}
+
+void route_partition::assign_cell_to_undirected_footpath(
+    timetable const& tt,
+    location_idx_t const loc1,
+    location_idx_t const loc2,
+    cell_idx_t cell) {
+  const auto& out_fps = tt.locations_.footpaths_out_[kDefaultProfile];
+
+  const auto loc1_out_fps = out_fps[loc1];
+  size_t fp1_base_idx = static_cast<size_t>(
+      std::distance(out_fps.data_.begin(), loc1_out_fps.begin()));
+  auto enumerated_loc1_out_fps = utl::enumerate(loc1_out_fps);
+  auto target_iter = std::find_if(enumerated_loc1_out_fps.begin(), enumerated_loc1_out_fps.end(), [loc2](const auto& pair) {
+    return std::get<1>(pair).target() == loc2;
+  });
+
+  utl::verify(target_iter != enumerated_loc1_out_fps.end(), "Directed footpath {} to {} not found", loc1, loc2);
+  const auto fp_idx = fp1_base_idx + std::get<0>(*target_iter);
+  footpath_to_cell_idx_[footpath_idx_t{fp_idx}] = cell;
 }
 
 

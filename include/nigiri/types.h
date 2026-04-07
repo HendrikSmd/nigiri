@@ -248,6 +248,8 @@ using flex_stop_seq_idx_t =
 
 using transport_range_t = pair<transport_idx_t, interval<stop_idx_t>>;
 
+using hyper_graph_node_idx_t = cista::strong<std::uint32_t, struct _hyper_graph_node_idx>;
+
 struct translation {
   translation() = default;
 

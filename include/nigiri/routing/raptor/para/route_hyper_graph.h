@@ -16,7 +16,7 @@ struct route_hyper_graph {
 
   using node_value_t = size_t;
   using hedge_value_t = size_t;
-  using hedge_t = std::vector<route_idx_t>;
+  using hedge_t = std::vector<hyper_graph_node_idx_t>;
 
   template<typename T>
   void apply_permutation(std::vector<T>& data, const std::vector<size_t>& permutation) {
@@ -64,15 +64,25 @@ struct route_hyper_graph {
     }
 
     size_t new_size = w_idx + 1;
-    hyper_edges.erase(hyper_edges.begin() + new_size, hyper_edges.end());
-    hedge_weights.erase(hedge_weights.begin() + new_size, hedge_weights.end());
+    hyper_edges.resize(new_size);
+    hedge_weights.resize(new_size);
   }
 
-  void insert_route_into_hedge(hedge_t& hedge, route_idx_t const r_idx) {
-    if (auto const insert_it = std::ranges::lower_bound(hedge, r_idx);
-        insert_it == hedge.end() || *insert_it != r_idx) {
-      hedge.insert(insert_it, r_idx);
+  void insert_node_into_hedge(hedge_t& hedge,
+                              hyper_graph_node_idx_t const node_idx) {
+    if (auto const insert_it = std::ranges::lower_bound(hedge, node_idx);
+        insert_it == hedge.end() || *insert_it != node_idx) {
+      hedge.insert(insert_it, node_idx);
     }
+  }
+
+  hyper_graph_node_idx_t to_node_idx(route_idx_t route_idx) {
+    return hyper_graph_node_idx_t{to_idx(route_idx)};
+  }
+
+  hyper_graph_node_idx_t to_node_idx(footpath_idx_t fp_idx,
+                                     timetable const& tt) {
+    return hyper_graph_node_idx_t{tt.n_routes() + to_idx(fp_idx)};
   }
 
 
@@ -82,51 +92,50 @@ struct route_hyper_graph {
     hedge_weights.clear();
 
     auto const timer = scoped_timer{"build hyper graph from timetable"};
-    // ==========================
-    // write hyper edges
-    // --------------------------
-    const auto n_components = tt.component_locations_.size();
-    for (auto component_idx = component_idx_t{0}; component_idx < n_components; ++component_idx) {
 
-      const auto& locs_in_component = tt.component_locations_[component_idx];
-      hedge_t reachable_routes;
-      for (const auto& loc : locs_in_component) {
-        const auto& loc_routes = tt.location_routes_[loc];
-        for (const auto& r_idx : loc_routes) {
-          insert_route_into_hedge(reachable_routes, r_idx);
+    vector_map<footpath_idx_t, std::pair<location_idx_t, location_idx_t>> undirected_fp_edges;
+    std::vector<std::vector<footpath_idx_t>> loc_incident_fps(tt.n_locations());
+    for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+      const auto loc_fps_out = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+      for (const auto& fp : loc_fps_out) {
+        if (loc < fp.target()) {
+          const auto next_index = footpath_idx_t{undirected_fp_edges.size()};
+          loc_incident_fps[to_idx(loc)].push_back(next_index);
+          loc_incident_fps[to_idx(fp.target())].push_back(next_index);
+          undirected_fp_edges.emplace_back(loc, fp.target());
         }
       }
-
-      hyper_edges.emplace_back(std::move(reachable_routes));
     }
+
+    // ==========================
+    // build hyper edges
+    // --------------------------
+    build_hyper_edges_uncontracted(tt, loc_incident_fps);
+
 
     // ==========================
     // write node weights
     // --------------------------
-    const auto n_routes = tt.n_routes();
-    n_nodes = n_routes;
-    node_weights.resize(n_routes, 0);
-    for (auto route_idx = route_idx_t{0}; route_idx < n_routes; ++route_idx) {
+    auto const n_nodes =
+        tt.n_routes() + undirected_fp_edges.size();
+    node_weights.resize(n_nodes, 1U);
+    for (auto route_idx = route_idx_t{0}; route_idx < tt.n_routes();
+         ++route_idx) {
       node_weights[route_idx.v_] = tt.n_events_for_route(route_idx);
     }
+    // This leaves nodes representing footpaths with
+    // a unary weight
+
 
     // ==========================
-    // write hyper edge weights
+    // build hyper edge weights
     // --------------------------
-    hedge_weights.resize(n_components, 0);
-    for (auto component_idx = component_idx_t{0}; component_idx < n_components; ++component_idx) {
-      auto const& locs_in_cmpnt = tt.component_locations_[component_idx];
-      size_t events_in_component = 0;
-      for (auto const& loc : locs_in_cmpnt) {
-        events_in_component += tt.n_events_at_location(loc);
-      }
-      // The base 2 logarithm of an unsigned is essentially its highest set bit position
-      hedge_weights[component_idx.v_] = events_in_component / locs_in_cmpnt.size();
-    }
+    build_hyper_edge_weights_uncontracted(tt, loc_incident_fps);
+
 
     // ==========================
     // merge hyper edges that relate
-    // to the same routes
+    // to the same connections
     // --------------------------
     sort_hedges_lexicographically();
     merge_duplicates();
@@ -156,7 +165,7 @@ struct route_hyper_graph {
     // write hmetis header [#edges #nodes 11]
     // the 11 signals both: edge and node weights
     // --------------------------
-    out_file << hyper_edges.size() << " " << n_nodes;
+    out_file << hyper_edges.size() << " " << node_weights.size();
     if (export_node_weights && export_hedge_weights) {
       out_file << " 11";
     } else if (export_node_weights) {
@@ -191,15 +200,56 @@ struct route_hyper_graph {
     // --------------------------
     //out_file << "% Node weights:" << std::endl;
     if (export_node_weights) {
-      for (size_t node_idx = 0U; node_idx < n_nodes; ++node_idx) {
-        out_file << node_weights[node_idx] << std::endl;
+      for (unsigned long node_weight : node_weights) {
+        out_file << node_weight << std::endl;
       }
     }
     out_file.close();
   }
 
+private:
 
-  size_t n_nodes;
+  void build_hyper_edges_uncontracted(
+      timetable const& tt,
+      std::vector<std::vector<footpath_idx_t>> const& loc_incident_fps) {
+    auto const n_locations = tt.n_locations();
+    utl::verify(loc_incident_fps.size() == n_locations, "Unexpected dimension");
+
+    for (auto location_idx = location_idx_t{0U}; location_idx < n_locations;
+         ++location_idx) {
+
+      hedge_t reachable_connections;
+
+      auto const loc_routes = tt.location_routes_[location_idx];
+      for (auto const route_idx : loc_routes) {
+        insert_node_into_hedge(reachable_connections, to_node_idx(route_idx));
+      }
+
+      for (auto const incident_fp_idx :
+           loc_incident_fps[to_idx(location_idx)]) {
+        insert_node_into_hedge(reachable_connections,
+                               to_node_idx(incident_fp_idx, tt));
+      }
+      hyper_edges.emplace_back(std::move(reachable_connections));
+    }
+  }
+
+  void build_hyper_edge_weights_uncontracted(
+      timetable const& tt,
+      std::vector<std::vector<footpath_idx_t>> const& loc_incident_fps) {
+    auto const n_locations = tt.n_locations();
+    hedge_weights.resize(n_locations, 0);
+    for (auto location_idx = location_idx_t{0}; location_idx < n_locations;
+         ++location_idx) {
+      size_t const events_at_location = tt.n_events_at_location(location_idx);
+      hedge_weights[to_idx(location_idx)] =
+          events_at_location +
+          loc_incident_fps[to_idx(location_idx)].size();
+    }
+  }
+
+
+
   std::vector<hedge_t> hyper_edges;
   std::vector<node_value_t> node_weights;
   std::vector<hedge_value_t> hedge_weights;

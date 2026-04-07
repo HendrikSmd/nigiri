@@ -13,6 +13,7 @@
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
 #include "nigiri/routing/raptor/para/route_hyper_graph.h"
 #include "nigiri/routing/raptor/para/route_partition.h"
+#include "nigiri/routing/raptor/para/timetable_view.h"
 #include "nigiri/routing/raptor/raptor.h"
 #include "nigiri/routing/raptor/raptor_state.h"
 #include "nigiri/routing/raptor_search.h"
@@ -55,15 +56,28 @@ pareto_set<routing::journey> raptor_search(
                .journeys_);
 }
 
+pareto_set<routing::journey> para_raptor_search(
+    timetable const& tt, routing::para::route_rank_store const& rs, routing::query q) {
+  using namespace nigiri;
+  using algo_state_t = routing::raptor_state;
+  static auto search_state = routing::search_state{};
+  static auto algo_state = algo_state_t{};
+
+  return *(routing::para_raptor_search(tt, rs, search_state, algo_state,
+                                       std::move(q), std::nullopt)
+               .journeys_);
+}
+
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 5> sub_commands = {
+  static constexpr std::array<sub_command, 6> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
       {"export-partition", "exports a partition in a supported format"},
       {"start-customization", "start the customization process"},
-      {"inspect-rank-store", "outputs information on the given rank store"}
+      {"inspect-rank-store", "outputs information on the given rank store"},
+      {"debug", "debug"}
     }
   };
 
@@ -114,11 +128,15 @@ int main(int argc, char** argv) {
     auto hedge_weights = true;
 
     bpo::options_description export_hgraph_desc("export-hgraph options");
-    export_hgraph_desc.add_options()
-        ("in", bpo::value(&in), "path to the input timetable used to construct the hyper graph")
-        ("out", bpo::value(&out)->default_value(out), "path to the output file")
-        ("node_weights", bpo::value(&node_weights)->default_value(node_weights), "compute node weights")
-        ("hedge_weights", bpo::value(&hedge_weights)->default_value(hedge_weights), "compute hedge weights");
+    export_hgraph_desc.add_options()(
+        "in", bpo::value(&in),
+        "path to the input timetable used to construct the hyper graph")(
+        "out", bpo::value(&out)->default_value(out), "path to the output file")(
+        "node_weights", bpo::value(&node_weights)->default_value(node_weights),
+        "compute node weights")(
+        "hedge_weights",
+        bpo::value(&hedge_weights)->default_value(hedge_weights),
+        "compute hedge weights");
 
     if (vm.contains("help")) {
       std::cout << export_hgraph_desc << "\n\n";
@@ -142,11 +160,12 @@ int main(int argc, char** argv) {
     auto in_tt = fs::path{};
     auto out = fs::path{"part.bin"};
 
-    bpo::options_description import_part_desc("export-hgraph options");
-    import_part_desc.add_options()
-        ("in_part", bpo::value(&in_part), "path to the partition file in hmetis format")
-        ("in_tt", bpo::value(&in_tt), "path to the timetable")
-        ("out", bpo::value(&out)->default_value(out), "path to the output file");
+    bpo::options_description import_part_desc("import-partition options");
+    import_part_desc.add_options()(
+        "in_part", bpo::value(&in_part),
+        "path to the partition file in hmetis format")(
+        "in_tt", bpo::value(&in_tt), "path to the timetable")(
+        "out", bpo::value(&out)->default_value(out), "path to the output file");
 
     if (vm.contains("help")) {
       std::cout << import_part_desc << "\n\n";
@@ -288,6 +307,52 @@ int main(int argc, char** argv) {
     bpo::notify(cvm);
     auto store = *routing::para::route_rank_store::read(in_store);
     store.print_summary(std::cout);
+  } else if (command == "debug") {
+    auto in_tt = fs::path{};
+    auto in_rs = fs::path{};
+
+    bpo::options_description debug_desc("debug options");
+    debug_desc.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("in_rs", bpo::value(&in_rs), "path to the route");
+
+    if (vm.contains("help")) {
+      std::cout << debug_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(debug_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto rs = *routing::para::route_rank_store::read(in_rs);
+
+    interval<unixtime_t> start_time = {
+      .from_ = sys_days(2024_y / March / 20_d) + 6_hours + 35_minutes,
+      .to_ = sys_days(2024_y / March / 20_d) + 8_hours + 35_minutes,
+    };
+
+    const auto start_loc = location_idx_t{47196};
+    const auto dest_loc = location_idx_t{14586};
+
+    routing::query q = {
+      .start_time_ = start_time,
+      .use_start_footpaths_ = true,
+      .start_ = {{start_loc, 0_minutes, 0U}},
+      .destination_ = {{dest_loc, 0_minutes, 0U}}
+    };
+
+    const auto cell_of_start = rs.partition_.location_to_cell_idx_[dest_loc];
+    std::cout << "Cell of location " << dest_loc << ": Level = " << static_cast<std::uint16_t>(cell_of_start.level) << ", Cell idx = " << cell_of_start.cell_idx << std::endl;
+
+    const auto res = raptor_search(tt, q);
+    std::cout << res.size() << std::endl;
+
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }

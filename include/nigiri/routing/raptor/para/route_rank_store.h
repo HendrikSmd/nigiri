@@ -12,7 +12,9 @@ struct route_rank_store {
   void                                          print_summary(std::ostream&) const;
 
   vector_map<route_idx_t, std::uint32_t> route_rank_start_idx_;
-  vector<rank_t> ranks_;
+  vector<rank_t> route_ranks_;
+  vector_map<footpath_idx_t, rank_t> footpath_ranks_;
+
   route_partition partition_;
 };
 

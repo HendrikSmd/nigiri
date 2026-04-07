@@ -15,6 +15,7 @@
 #include "nigiri/special_stations.h"
 #include "nigiri/timetable.h"
 #include "nigiri/types.h"
+#include "utl/enumerate.h"
 
 #include "para/customization.h"
 
@@ -117,7 +118,7 @@ struct raptor {
     std::vector<std::uint16_t>& dist_to_dest,
     std::vector<std::uint16_t>& lb,
     day_idx_t const base,
-    std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
+    std::pair<location_idx_t, location_idx_t> start_dest_locations,
     para::route_rank_store const& rank_store) requires (algo_version == version::kPara)
       : raptor(
           tt,
@@ -135,7 +136,7 @@ struct raptor {
           false,
           false,
           {},
-          std::move(start_dest_cmpnt),
+          std::move(start_dest_locations),
           &rank_store) {}
 
   raptor(
@@ -170,7 +171,7 @@ struct raptor {
           require_car_transport,
           is_wheelchair,
           tts,
-          std::pair(component_idx_t::invalid(), component_idx_t::invalid()),
+          std::pair(location_idx_t::invalid(), location_idx_t::invalid()),
           nullptr) {}
 
   algo_stats_t get_stats() const { return stats_; }
@@ -360,7 +361,7 @@ private:
   bool const require_car_transport,
   bool const is_wheelchair,
   transfer_time_settings const& tts,
-  std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
+  std::pair<location_idx_t, location_idx_t> start_dest_locations,
   para::route_rank_store const* rank_store)
   : tt_{tt},
     rtt_{rtt},
@@ -384,7 +385,7 @@ private:
     require_car_transport_{require_car_transport},
     is_wheelchair_{is_wheelchair},
     transfer_time_settings_{tts},
-    start_dest_cmpnt_{start_dest_cmpnt},
+    start_dest_locations_{start_dest_locations},
     rank_store_{rank_store} {
     assert(Vias == via_stops_.size());
     reset_arrivals();
@@ -405,8 +406,8 @@ private:
       dest_lcls_.resize(n_routes_);
       for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
         auto const& r_store = *rank_store_;
-        auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
-        auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
+        auto const g_cell_start = r_store.partition_.location_to_cell_idx_[start_dest_locations.first];
+        auto const g_cell_dest = r_store.partition_.location_to_cell_idx_[start_dest_locations.second];
         start_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_start);
         dest_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_dest);
       }
@@ -464,7 +465,7 @@ private:
       if constexpr (algo_version == version::kPara) {
         auto const& r_store = *rank_store_;
         const auto r_from = r_store.route_rank_start_idx_[r];
-        if (auto const route_rank = r_store.ranks_[r_from];
+        if (auto const route_rank = r_store.route_ranks_[r_from];
             route_rank < start_lcls_[to_idx(r)] &&
             route_rank < dest_lcls_[to_idx(r)]) {
           stats_.n_route_scan_pruned_by_para++;
@@ -1036,7 +1037,7 @@ private:
 
         if constexpr (algo_version == version::kPara) {
           if (auto transfer_rank =
-                  rank_store_->ranks_[r_ranks_from + (i * 2)];
+                  rank_store_->route_ranks_[r_ranks_from + (i * 2)];
               transfer_rank < start_lcls_[to_idx(r)] &&
               transfer_rank < dest_lcls_[to_idx(r)]) {
             stats_.n_route_scan_pruned_by_para++;
@@ -1175,7 +1176,7 @@ private:
 
       if constexpr (algo_version == version::kPara) {
         if (auto transfer_rank =
-                rank_store_->ranks_[r_ranks_from + (1 + (i * 2))];
+                rank_store_->route_ranks_[r_ranks_from + (1 + (i * 2))];
             transfer_rank < start_lcls_[to_idx(r)] &&
             transfer_rank < dest_lcls_[to_idx(r)]) {
           stats_.n_route_scan_pruned_by_para++;
@@ -1400,7 +1401,7 @@ private:
   bool is_wheelchair_;
   transfer_time_settings transfer_time_settings_;
 
-  std::pair<component_idx_t, component_idx_t> start_dest_cmpnt_;
+  std::pair<location_idx_t, location_idx_t> start_dest_locations_;
   std::vector<rank_t> start_lcls_, dest_lcls_;
   para::route_rank_store const* rank_store_;
 };

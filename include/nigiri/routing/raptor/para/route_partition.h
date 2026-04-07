@@ -19,17 +19,28 @@ struct route_partition {
 
   void write(std::filesystem::path const&) const;
 
+  void print_cells_of_location(timetable const& tt, location_idx_t loc) const;
+
   static cista::wrapped<route_partition> read(std::filesystem::path const&);
 
   std::uint16_t get_num_of_cells_on_level(std::uint8_t level) const;
 
   cell_idx_t get_cell_of_route(route_idx_t r_idx, uint8_t level) const;
 
+  cell_idx_t get_cell_of_footpath(footpath_idx_t fp_idx, uint8_t level) const;
+
+  void assign_cells_to_locations(timetable const& tt);
+
   void assign_cells_to_components(timetable const& tt);
 
+  void assign_cell_to_undirected_footpath(timetable const& tt,
+                                          location_idx_t loc1,
+                                          location_idx_t loc2, cell_idx_t cell);
 
-  vector_map<component_idx_t, global_cell_idx> cmpnt_to_cell_idx_;
+
+  vector_map<location_idx_t, global_cell_idx> location_to_cell_idx_;
   vector_map<route_idx_t, cell_idx_t> route_to_cell_idx_;
+  vector_map<footpath_idx_t, cell_idx_t> footpath_to_cell_idx_;
   std::uint8_t n_levels_{};
 };
 

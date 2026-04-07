@@ -1,11 +1,13 @@
 #pragma once
 
+#include "boost/json.hpp"
+
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/timetable.h"
-#include "boost/json.hpp"
 
 #include <string>
 
+#include "utl/enumerate.h"
 
 namespace nigiri::routing::para {
 
@@ -29,8 +31,7 @@ inline bool has_distinct(const std::vector<cell_idx_t>& cells) {
 inline boost::json::object location_to_feature(timetable const& tt,
                                                route_partition const& rtp,
                                                location_idx_t const l_idx) {
-  auto cmpnt_idx = tt.location_component_[l_idx];
-  auto const& [cell_idx, lvl] = rtp.cmpnt_to_cell_idx_[cmpnt_idx];
+  auto const& [cell_idx, lvl] = rtp.location_to_cell_idx_[l_idx];
 
   boost::json::array cell_idx_on_levels(rtp.n_levels_ + 1, boost::json::value{-1});
   auto current_lvl = lvl;
@@ -105,13 +106,29 @@ std::vector<size_t> count_routes_on_level(timetable const& tt,
   return n_of_routes_in_cells;
 }
 
+std::vector<size_t> count_footpaths_on_level(timetable const& tt,
+                                             route_partition const& rtp,
+                                             uint8_t const level) {
+  std::vector<size_t> n_of_fps_in_cells(rtp.get_num_of_cells_on_level(level),
+                                        0U);
+  for (auto fp_idx = footpath_idx_t{0};
+       fp_idx < tt.locations_.footpaths_out_[kDefaultProfile].data_.size();
+       ++fp_idx) {
+    n_of_fps_in_cells[to_idx(rtp.get_cell_of_footpath(fp_idx, level))]++;
+  }
+  return n_of_fps_in_cells;
+}
+
 std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
   size_t n_of_cells = rtp.get_num_of_cells_on_level(0);
   std::string graph_repr("digraph BinaryTree {\nnode [shape=record];\nedge [arrowsize=0.8];\n");
   append_links(rtp, graph_repr);
 
   std::string nodes_repr;
-  constexpr std::string_view node_template = "C{} [label=\"<f0> #routes: {} |<f1> #cmpnts: {} |<f2> #cut cmpnts: {} \"]\n";
+  constexpr std::string_view node_template =
+      "C{} [label=\"<f0> #routes: {} |<f1> #footpaths: {} |<f2> #locations: {} "
+      "|<f3> #cut "
+      "locations: {} \"]\n";
   size_t n_total_nodes = 2 * n_of_cells - 1;
   size_t chars_for_nodes_ub = n_total_nodes * (node_template.size()
                                              + estimate_chars(n_of_cells)
@@ -120,37 +137,50 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
                                              + 2 * estimate_chars(tt.n_locations()));
   nodes_repr.reserve(chars_for_nodes_ub);
 
-  auto n_components = tt.component_locations_.size();
-  std::vector<std::vector<cell_idx_t>> component_cell_idxs;
-  for (auto c = component_idx_t{0}; c < n_components; ++c) {
+  auto n_locations = tt.n_locations();
+  std::vector<std::vector<cell_idx_t>> location_cell_idxs;
+  for (auto loc_idx = location_idx_t{0}; loc_idx < n_locations; ++loc_idx) {
     std::vector<cell_idx_t> cell_idxs;
-    for (const auto& l : tt.component_locations_[c]) {
-      const auto& routes_of_loc = tt.location_routes_[l];
-
+      const auto routes_of_loc = tt.location_routes_[loc_idx];
       std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs), [&](const route_idx_t& r) {
         return rtp.route_to_cell_idx_[r];
       });
-    }
+
+      auto const loc_fps =
+          tt.locations_.footpaths_out_[kDefaultProfile][loc_idx];
+      auto const fp_base_idx = std::distance(
+          tt.locations_.footpaths_out_[kDefaultProfile].data_.begin(),
+          loc_fps.begin());
+      for (auto const [fp_offset, _] : utl::enumerate(loc_fps)) {
+        auto const fp_idx =
+            footpath_idx_t{static_cast<unsigned long>(fp_base_idx) + fp_offset};
+        if (auto const cell_idx = rtp.footpath_to_cell_idx_[fp_idx];
+            cell_idx != cell_idx_t::invalid()) {
+          cell_idxs.push_back(cell_idx);
+        }
+      }
+
     std::ranges::sort(cell_idxs);
     auto last = std::unique(cell_idxs.begin(), cell_idxs.end());
     cell_idxs.erase(last, cell_idxs.end());
-    component_cell_idxs.emplace_back(cell_idxs);
+    location_cell_idxs.emplace_back(cell_idxs);
   }
 
 
-  vector_map<cell_idx_t, size_t> internal_cmpnt_cell_counts(n_of_cells, 0U);
-  vector_map<cell_idx_t, size_t> cut_cmpnt_cell_counts(n_of_cells, 0U);
+  vector_map<cell_idx_t, size_t> internal_locs_cell_counts(n_of_cells, 0U);
+  vector_map<cell_idx_t, size_t> cut_locs_cell_counts(n_of_cells, 0U);
   for (size_t level = 0U; level <= rtp.n_levels_; ++level) {
 
     const auto n_routes_per_cell = count_routes_on_level(tt, rtp, level);
-    for (const auto& cell_idxs : component_cell_idxs) {
+    const auto n_fps_per_cell = count_footpaths_on_level(tt, rtp, level);
+    for (const auto& cell_idxs : location_cell_idxs) {
       if (cell_idxs.size() == 1) {
-        internal_cmpnt_cell_counts[cell_idxs.front()]++;
+        internal_locs_cell_counts[cell_idxs.front()]++;
         continue;
       }
 
-      for (const auto& cell_idx : cell_idxs) {
-        cut_cmpnt_cell_counts[cell_idx]++;
+      for (const auto cell_idx : cell_idxs) {
+        cut_locs_cell_counts[cell_idx]++;
       }
     }
 
@@ -159,17 +189,18 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
       nodes_repr.append(fmt::format(node_template,
         ident,
         n_routes_per_cell[to_idx(cell_idx)],
-        internal_cmpnt_cell_counts[cell_idx],
-        cut_cmpnt_cell_counts[cell_idx])
+        n_fps_per_cell[to_idx(cell_idx)],
+        internal_locs_cell_counts[cell_idx],
+        cut_locs_cell_counts[cell_idx])
       );
     }
 
     n_of_cells >>= 1U;
-    internal_cmpnt_cell_counts.resize(n_of_cells);
-    std::ranges::fill(internal_cmpnt_cell_counts, 0U);
-    cut_cmpnt_cell_counts.resize(n_of_cells);
-    std::ranges::fill(cut_cmpnt_cell_counts, 0U);
-    for (auto& cell_idxs : component_cell_idxs) {
+    internal_locs_cell_counts.resize(n_of_cells);
+    std::ranges::fill(internal_locs_cell_counts, 0U);
+    cut_locs_cell_counts.resize(n_of_cells);
+    std::ranges::fill(cut_locs_cell_counts, 0U);
+    for (auto& cell_idxs : location_cell_idxs) {
       std::ranges::transform(cell_idxs, cell_idxs.begin(), [](cell_idx_t const& cell_idx) {
         return route_partition::get_parent_idx(cell_idx);
       });

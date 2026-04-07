@@ -48,7 +48,6 @@ struct para_search {
 
 
     utl::verify(q_.destination_.size() == 1U, "para-raptor only supports one dedicated destination");
-    auto const dest_cmpnt = tt_.location_component_[q_.destination_.front().target()];
     utl::verify(q_.dest_match_mode_ == location_match_mode::kEquivalent ||
                 q_.dest_match_mode_ == location_match_mode::kExact, "destination match mode not supported by para-raptor");
     collect_destinations(tt_, q_.destination_, q_.dest_match_mode_,
@@ -65,7 +64,7 @@ struct para_search {
     stats_.lb_time_ = static_cast<std::uint64_t>(UTL_TIMING_MS(lb));
 
     utl::verify(q_.start_.size() == 1U, "para-raptor only supports one dedicated start");
-    auto const start_cmpnt = tt_.location_component_[q_.start_.front().target()];
+    utl::verify(q_.prf_idx_ == kDefaultProfile, "para-raptor only supports default profile");
 
 
 #if defined(NIGIRI_TRACING)
@@ -99,7 +98,7 @@ struct para_search {
                           ((search_interval_.to_ - search_interval_.from_) / 2)) -
                       tt_.internal_interval().from_)
                       .count()},
-              {start_cmpnt, dest_cmpnt},
+              {q_.start_.front().target(), q_.destination_.front().target()},
               rank_store
              };
   }

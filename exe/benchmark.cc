@@ -504,7 +504,7 @@ int main(int argc, char* argv[]) {
       }
     }
   } else if (start_mode_str == "station") {
-    gs.start_match_mode_ = location_match_mode::kEquivalent;
+    gs.start_match_mode_ = location_match_mode::kExact;
   } else {
     std::cout << "Error: Invalid start mode\n";
     return 1;
@@ -523,7 +523,7 @@ int main(int argc, char* argv[]) {
       }
     }
   } else if (dest_mode_str == "station") {
-    gs.dest_match_mode_ = location_match_mode::kEquivalent;
+    gs.dest_match_mode_ = location_match_mode::kExact;
   } else {
     std::cout << "Error: Invalid destination mode\n";
     return 1;

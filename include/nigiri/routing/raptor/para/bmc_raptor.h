@@ -21,7 +21,8 @@ struct bmc_journey {
 struct bmc_raptor {
 
   bmc_raptor(timetable_view const& tt_view, bmc_raptor_state& state,
-             bitvec const& destination_mask, bitvec const& transfer_mask);
+             bitvec const& destination_mask, bitvec const& transfer_mask,
+             bitvec const& footpath_mask);
 
 #ifdef NIGIRI_ENABLE_SIMD
   static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
@@ -141,6 +142,7 @@ struct bmc_raptor {
   bmc_raptor_state& state_;
   bitvec const& destination_mask_; // Indexed by source location_idx_t
   bitvec const& transfer_mask_;    // Indexed by source location_idx_t
+  bitvec const& footpath_mask_;    // Indexed by source location_idx_t
   bitset<kMaxDays> const tt_day_mask_;
 };
 

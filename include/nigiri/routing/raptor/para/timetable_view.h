@@ -12,12 +12,13 @@ struct timetable_view {
   explicit timetable_view(timetable const& tt);
 
            timetable_view(timetable const& tt,
-                          bitvec const& route_mask);
+                          bitvec const& route_mask,
+                          bitvec const& footpath_mask);
 
 
 
 
-  void index(bitvec const& route_mask);
+  void index(bitvec const& route_mask, bitvec const& footpath_mask);
   location_idx_t::value_t get_n_locations() const;
   route_idx_t::value_t get_n_routes() const;
   timetable const& get_source_tt() const;
