@@ -182,19 +182,20 @@ void route_partition::assign_cell_to_undirected_footpath(
     location_idx_t const loc1,
     location_idx_t const loc2,
     cell_idx_t cell) {
-  const auto& out_fps = tt.locations_.footpaths_out_[kDefaultProfile];
+  auto const& out_fps = tt.locations_.footpaths_out_[kDefaultProfile];
 
-  const auto loc1_out_fps = out_fps[loc1];
-  size_t fp1_base_idx = static_cast<size_t>(
+  auto const loc1_out_fps = out_fps[loc1];
+  auto const fp1_base_idx = static_cast<size_t>(
       std::distance(out_fps.data_.begin(), loc1_out_fps.begin()));
-  auto enumerated_loc1_out_fps = utl::enumerate(loc1_out_fps);
-  auto target_iter = std::find_if(enumerated_loc1_out_fps.begin(), enumerated_loc1_out_fps.end(), [loc2](const auto& pair) {
-    return std::get<1>(pair).target() == loc2;
-  });
+  auto target_iter = std::ranges::find_if(
+      loc1_out_fps, [loc2](auto const& fp) { return fp.target() == loc2; });
 
-  utl::verify(target_iter != enumerated_loc1_out_fps.end(), "Directed footpath {} to {} not found", loc1, loc2);
-  const auto fp_idx = fp1_base_idx + std::get<0>(*target_iter);
-  footpath_to_cell_idx_[footpath_idx_t{fp_idx}] = cell;
+  utl::verify(target_iter != loc1_out_fps.end(),
+              "Directed footpath {} to {} not found", loc1, loc2);
+
+  auto const fp_idx =
+      static_cast<size_t>(std::distance(loc1_out_fps.begin(), target_iter));
+  footpath_to_cell_idx_[footpath_idx_t{fp1_base_idx + fp_idx}] = cell;
 }
 
 
