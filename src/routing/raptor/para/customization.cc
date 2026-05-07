@@ -611,10 +611,6 @@ void customizer::mark_updated_routes_and_used_transfers(
     const auto stop_seq = tt_.route_location_seq_[route_idx];
     for (auto i = 0U; i < stop_seq.size(); ++i) {
       location_idx_t stop_loc = stop{stop_seq[i]}.location_idx();
-      if (to_idx(cell_idx) == 0 && to_idx(stop_loc) == 19274) {
-        std::cout << route_idx << std::endl;
-        utl::fail("Failed");
-      }
       if (i == 0 || i == stop_seq.size() - 1) {
         if (atomic_ranks[base] == level + 1) {
           used_transfers_[to_idx(cell_idx)].set(to_idx(stop_loc), true);

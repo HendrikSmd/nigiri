@@ -18,7 +18,7 @@ void route_rank_store::print_summary(std::ostream&) const {
   std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
   std::vector<size_t> transfer_rank_counts(partition_.n_levels_ + 1, 0ULL);
 
-  auto const n_routes = route_rank_start_idx_.size();
+  auto const n_routes = route_rank_start_idx_.size() - 1;
   for (auto r = route_idx_t{0}; r < n_routes; ++r) {
     const auto r_from = route_rank_start_idx_[r];
     const auto r_to = route_rank_start_idx_[r + 1];
