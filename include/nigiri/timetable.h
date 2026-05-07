@@ -158,7 +158,7 @@ struct timetable {
     size_t res = 0;
     // Get all routes in which loc is a stop
     auto const& loc_routes = location_routes_[loc];
-    for (auto const& loc_route : loc_routes) {
+    for (auto const loc_route : loc_routes) {
       auto const& loc_seq = route_location_seq_[loc_route];
       // Find the position of loc in the route loc_route
       const auto stop_it = std::ranges::find_if(
@@ -166,7 +166,9 @@ struct timetable {
         [=](stop::value_type const& s) {
           return stop{s}.location_idx() == loc;
         });
-      assert(stop_it != loc_seq.end());
+      utl::verify(stop_it != loc_seq.end(),
+                  "location {} expected in route {} but could not be found",
+                  loc, loc_route);
 
       // If loc is first/last stop we only have departure/arrival
       // event per trip. If not we have both (arrival and departure).
@@ -185,6 +187,10 @@ struct timetable {
       }
     }
     return res;
+  }
+
+  size_t n_routes_at_location(location_idx_t const loc) const {
+    return location_routes_[loc].size();
   }
 
   size_t n_events_for_route(route_idx_t const r) const {

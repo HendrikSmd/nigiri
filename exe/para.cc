@@ -112,13 +112,30 @@ int main(int argc, char** argv) {
     auto out = fs::path{"hyper-graph.out.txt"};
     auto node_weights = true;
     auto hedge_weights = true;
+    std::string hedge_weighting_scheme = "numEvents";
+    std::string hedge_normalization = "none";
 
     bpo::options_description export_hgraph_desc("export-hgraph options");
-    export_hgraph_desc.add_options()
-        ("in", bpo::value(&in), "path to the input timetable used to construct the hyper graph")
-        ("out", bpo::value(&out)->default_value(out), "path to the output file")
-        ("node_weights", bpo::value(&node_weights)->default_value(node_weights), "compute node weights")
-        ("hedge_weights", bpo::value(&hedge_weights)->default_value(hedge_weights), "compute hedge weights");
+    export_hgraph_desc.add_options()(
+        "in", bpo::value(&in),
+        "path to the input timetable used to construct the hyper graph")(
+        "out", bpo::value(&out)->default_value(out), "path to the output file")(
+        "node_weights", bpo::value(&node_weights)->default_value(node_weights),
+        "compute node weights")(
+        "hedge_weights",
+        bpo::value(&hedge_weights)->default_value(hedge_weights),
+        "compute hedge weights")(
+        "hedge_weighting",
+        bpo::value(&hedge_weighting_scheme)
+            ->default_value(hedge_weighting_scheme),
+        "hedge weighting scheme (numRoutes)=number of routes incident to "
+        "component, (numEvents)=num events incident to component")(
+        "hedge_normalization",
+        bpo::value(&hedge_normalization)->default_value(hedge_normalization),
+        "hedge normalization (none)=raw weights, (log)=log normalization, "
+        "(cmpntSize)=normalized by component size, "
+        "(logAndCmpntSize)=normalized by component size and then log "
+        "normalized");
 
     if (vm.contains("help")) {
       std::cout << export_hgraph_desc << "\n\n";
@@ -134,8 +151,44 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in);
     tt.resolve();
 
+    auto hedge_weighting = routing::hedge_weighting::kNumEvents;
+    if (hedge_weighting_scheme == "numEvents") {
+      hedge_weighting = routing::hedge_weighting::kNumEvents;
+    } else if (hedge_weighting_scheme == "numRoutes") {
+      hedge_weighting = routing::hedge_weighting::kNumRoutes;
+    } else {
+      utl::fail("Invalid hedge weighting scheme");
+    }
+
+    auto normalization = routing::hedge_normalization::kNone;
+    if (hedge_normalization == "none") {
+      normalization = routing::hedge_normalization::kNone;
+    } else if (hedge_normalization == "log") {
+      normalization = routing::hedge_normalization::kLog;
+    } else if (hedge_normalization == "cmpntSize") {
+      normalization = routing::hedge_normalization::kCmpntSize;
+    } else if (hedge_normalization == "logAndCmpntSize") {
+      normalization = routing::hedge_normalization::kLogCmpntSize;
+    } else {
+      utl::fail("Invalid hedge normalization");
+    }
+    nigiri::log(log_lvl::info, "hyper-graph export",
+                "Hedge weighting scheme: {}",
+                (hedge_weighting == routing::hedge_weighting::kNumRoutes)
+                    ? "numRoutes"
+                    : "numEvents");
+
+    nigiri::log(
+        log_lvl::info, "hyper-graph export", "Hedge normalization: {}",
+        (normalization == routing::hedge_normalization::kNone)
+            ? "none"
+            : (normalization == routing::hedge_normalization::kLog
+                   ? "log"
+                   : (normalization == routing::hedge_normalization::kCmpntSize
+                          ? "cmpntSize"
+                          : "logAndCmpntSize")));
     routing::route_hyper_graph hyper_graph;
-    hyper_graph.from(tt);
+    hyper_graph.from(tt, hedge_weighting, normalization);
     hyper_graph.export_as_hmetis(out, node_weights, hedge_weights);
   } else if (command == "import-partition") {
     auto in_part = fs::path{};

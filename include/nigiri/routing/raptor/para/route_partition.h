@@ -9,8 +9,13 @@ namespace nigiri::routing::para {
 struct route_partition {
 
   struct global_cell_idx {
-    cell_idx_t cell_idx;
-    std::uint8_t level;
+
+    bool operator==(global_cell_idx const& other) const;
+
+    static global_cell_idx invalid();
+
+    cell_idx_t cell_idx_;
+    std::uint8_t level_;
   };
 
   static cell_idx_t get_parent_idx(cell_idx_t cell_idx, std::uint8_t levels = 1);

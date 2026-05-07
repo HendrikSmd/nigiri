@@ -10,6 +10,15 @@
 
 namespace nigiri::routing::para {
 
+bool route_partition::global_cell_idx::operator==(
+    global_cell_idx const& other) const {
+  return this->cell_idx_ == other.cell_idx_ && this->level_ == other.level_;
+}
+
+route_partition::global_cell_idx route_partition::global_cell_idx::invalid() {
+  return {cell_idx_t::invalid(), std::numeric_limits<std::uint8_t>::max()};
+}
+
 cell_idx_t route_partition::get_parent_idx(cell_idx_t const cell_idx,
                                            std::uint8_t const levels) {
   return cell_idx >> levels;
@@ -59,11 +68,7 @@ void route_partition::from_hmetis_result(std::filesystem::path const& path, time
 
 void route_partition::assign_cells_to_components(timetable const& tt) {
   auto n_components= tt.component_locations_.size();
-  cmpnt_to_cell_idx_.resize(n_components,
-                            global_cell_idx{
-                              cell_idx_t::invalid(),
-                              std::numeric_limits<std::uint8_t>::max()
-                            });
+  cmpnt_to_cell_idx_.resize(n_components, global_cell_idx::invalid());
   std::vector<std::vector<cell_idx_t>> component_cell_idxs;
   for (auto c = component_idx_t{0}; c < n_components; ++c) {
 

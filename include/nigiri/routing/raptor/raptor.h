@@ -414,7 +414,7 @@ private:
   }
 
   static rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
-    return rank_t{g_cell.level + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx.v_ ^ (route_cell.v_ >> g_cell.level)))};
+    return rank_t{g_cell.level_ + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx_.v_ ^ (route_cell.v_ >> g_cell.level_)))};
   }
 
   date::sys_days base() const {

@@ -26,15 +26,18 @@ inline bool has_distinct(const std::vector<cell_idx_t>& cells) {
   return false;
 }
 
-inline boost::json::object location_to_feature(timetable const& tt,
+inline std::optional<boost::json::object> location_to_feature(timetable const& tt,
                                                route_partition const& rtp,
                                                location_idx_t const l_idx) {
   auto cmpnt_idx = tt.location_component_[l_idx];
-  auto const& [cell_idx, lvl] = rtp.cmpnt_to_cell_idx_[cmpnt_idx];
+  auto const& global_cell = rtp.cmpnt_to_cell_idx_[cmpnt_idx];
+  if (global_cell == route_partition::global_cell_idx::invalid()) {
+    return std::nullopt;
+  }
 
   boost::json::array cell_idx_on_levels(rtp.n_levels_ + 1, boost::json::value{-1});
-  auto current_lvl = lvl;
-  auto current_cell_idx = cell_idx;
+  auto current_lvl = global_cell.level_;
+  auto current_cell_idx = global_cell.cell_idx_;
   while (current_lvl <= rtp.n_levels_) {
     cell_idx_on_levels[current_lvl] = boost::json::value{to_idx(current_cell_idx)};
     current_cell_idx = route_partition::get_parent_idx(current_cell_idx);
@@ -61,10 +64,10 @@ inline void emplace_features(timetable const& tt,
                             route_partition const& rtp,
                             boost::json::array& features) {
   for (auto l_idx = location_idx_t{0}; l_idx < tt.n_locations(); ++l_idx) {
-    if (tt.location_routes_[l_idx].empty()) {
-      continue;
+    if (auto const opt_feature = location_to_feature(tt, rtp, l_idx);
+        opt_feature.has_value()) {
+      features.emplace_back(opt_feature.value());
     }
-    features.emplace_back(location_to_feature(tt, rtp, l_idx));
   }
 }
 
