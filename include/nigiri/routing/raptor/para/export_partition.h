@@ -1,11 +1,13 @@
 #pragma once
 
+#include "boost/json.hpp"
+
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/timetable.h"
-#include "boost/json.hpp"
 
 #include <string>
 
+#include "utl/enumerate.h"
 
 namespace nigiri::routing::para {
 
@@ -114,14 +116,10 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
   append_links(rtp, graph_repr);
 
   std::string nodes_repr;
-  constexpr std::string_view node_template = "C{} [label=\"<f0> #routes: {} |<f1> #cmpnts: {} |<f2> #cut cmpnts: {} \"]\n";
-  size_t n_total_nodes = 2 * n_of_cells - 1;
-  size_t chars_for_nodes_ub = n_total_nodes * (node_template.size()
-                                             + estimate_chars(n_of_cells)
-                                             + estimate_chars(rtp.n_levels_)
-                                             + estimate_chars(tt.n_routes())
-                                             + 2 * estimate_chars(tt.n_locations()));
-  nodes_repr.reserve(chars_for_nodes_ub);
+  constexpr std::string_view node_template =
+      "C{} [label=\"<f0> #routes: {} |<f1> #cmpnts: {} |<f2> #cut cmpnts: {} "
+      "|<f2> #cut locations: {} \"]\n";
+
 
   auto n_components = tt.component_locations_.size();
   std::vector<std::vector<cell_idx_t>> component_cell_idxs;
@@ -143,17 +141,22 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
 
   vector_map<cell_idx_t, size_t> internal_cmpnt_cell_counts(n_of_cells, 0U);
   vector_map<cell_idx_t, size_t> cut_cmpnt_cell_counts(n_of_cells, 0U);
+  vector_map<cell_idx_t, size_t> cut_location_cell_counts(n_of_cells, 0U);
   for (size_t level = 0U; level <= rtp.n_levels_; ++level) {
 
     const auto n_routes_per_cell = count_routes_on_level(tt, rtp, level);
-    for (const auto& cell_idxs : component_cell_idxs) {
+    for (const auto [cmpnt_idx, cell_idxs] : utl::enumerate(component_cell_idxs)) {
       if (cell_idxs.size() == 1) {
         internal_cmpnt_cell_counts[cell_idxs.front()]++;
         continue;
       }
 
+      auto const cmpnt_locations =
+          tt.component_locations_[component_idx_t{cmpnt_idx}];
+
       for (const auto& cell_idx : cell_idxs) {
         cut_cmpnt_cell_counts[cell_idx]++;
+        cut_location_cell_counts[cell_idx] += cmpnt_locations.size();
       }
     }
 
@@ -163,7 +166,8 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
         ident,
         n_routes_per_cell[to_idx(cell_idx)],
         internal_cmpnt_cell_counts[cell_idx],
-        cut_cmpnt_cell_counts[cell_idx])
+        cut_cmpnt_cell_counts[cell_idx],
+        cut_location_cell_counts[cell_idx])
       );
     }
 
@@ -172,6 +176,8 @@ std::string to_graphviz(timetable const& tt, route_partition const& rtp) {
     std::ranges::fill(internal_cmpnt_cell_counts, 0U);
     cut_cmpnt_cell_counts.resize(n_of_cells);
     std::ranges::fill(cut_cmpnt_cell_counts, 0U);
+    cut_location_cell_counts.resize(n_of_cells);
+    std::ranges::fill(cut_location_cell_counts, 0U);
     for (auto& cell_idxs : component_cell_idxs) {
       std::ranges::transform(cell_idxs, cell_idxs.begin(), [](cell_idx_t const& cell_idx) {
         return route_partition::get_parent_idx(cell_idx);
