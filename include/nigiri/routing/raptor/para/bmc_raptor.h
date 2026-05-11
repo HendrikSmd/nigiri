@@ -25,10 +25,9 @@ struct bmc_raptor {
              bitvec const& footpath_mask);
 
 #ifdef NIGIRI_ENABLE_SIMD
-  static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
-                                        std::array<std::uint16_t, 3> const& label,
-                                        bmc_round_meta_data const& meta_data,
-                                        search_bitfield sbf);
+  static bool add_to_non_dest_round_bag(
+      bmc_raptor_bag_t& bag, std::array<std::uint16_t, 3> const& label,
+      bmc_round_meta_data const& meta_data, search_bitfield sbf);
 
   static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                     std::array<std::uint16_t, 3> const& label,
@@ -47,7 +46,7 @@ struct bmc_raptor {
   template <auto dominates>
   static void cleanup_after_footpaths_added(bmc_raptor_bag_t& bag) {
     for (size_t fp_i = bag.labels_.size() - 1; fp_i > 0; --fp_i) {
-      const auto& fp_label = bag.labels_[fp_i];
+      auto const& fp_label = bag.labels_[fp_i];
 
       if (fp_label.label_.is_footpath_ != 1) {
         break;
@@ -57,8 +56,7 @@ struct bmc_raptor {
         continue;
       }
 
-      for (size_t round_i = fp_i;
-           round_i > 0; --round_i) {
+      for (size_t round_i = fp_i; round_i > 0; --round_i) {
 
         auto& round_label = bag.labels_[round_i - 1];
         if (round_label.tdb_.none()) {
@@ -68,18 +66,21 @@ struct bmc_raptor {
         if (dominates(fp_label.label_, round_label.label_)) {
           round_label.tdb_ &= ~fp_label.tdb_;
         }
-
       }
     }
 
-    std::erase_if(bag.labels_, [](const auto& label){ return label.tdb_.none(); });
+    std::erase_if(bag.labels_,
+                  [](auto const& label) { return label.tdb_.none(); });
   }
 
-  static bool dominates_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+  static bool dominates_destination(bmc_raptor_label const& l1,
+                                    bmc_raptor_label const& l2);
 
-  static bool dominates_non_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+  static bool dominates_non_destination(bmc_raptor_label const& l1,
+                                        bmc_raptor_label const& l2);
 
-  static bool dominates(bmc_raptor_label const& l1, bmc_raptor_label const& l2) {
+  static bool dominates(bmc_raptor_label const& l1,
+                        bmc_raptor_label const& l2) {
     return l1.dominates_destination(l2);
   }
 
@@ -88,7 +89,7 @@ struct bmc_raptor {
   static void cleanup_after_footpaths_at_non_dest(bmc_raptor_bag_t& bag);
 
   static bool add_carefully_to_dest_round_bag(bmc_raptor_bag_t& bag,
-                                              const bmc_raptor_label& label,
+                                              bmc_raptor_label const& label,
                                               search_bitfield sbf);
 
   static bool add_carefully_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
@@ -96,7 +97,7 @@ struct bmc_raptor {
                                                   search_bitfield sbf);
 
   static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
-                                        const bmc_raptor_label& label,
+                                        bmc_raptor_label const& label,
                                         search_bitfield sbf);
 
   static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
@@ -118,16 +119,19 @@ struct bmc_raptor {
 
   static bitset<kMaxDays> get_tt_day_mask(timetable const& tt);
 
-  void init_starts(location_idx_view_t location_idx,
-                   bool use_initial_fp);
+  void init_starts(location_idx_view_t location_idx, bool use_initial_fp);
 
   void init_location_with_offset(location_idx_view_t location_idx_view,
-                                 duration_t minutes_to_arrive);
+                                 duration_t minutes_to_arrive,
+                                 bool is_initial_fp);
 
-  void get_earliest_sufficient_transports(
-      std::uint32_t bag_idx, std::uint16_t departure, std::uint16_t arr_with_transfer,
-      search_bitfield const& td_bitfield, route_idx_t route_idx,
-      unsigned short stop_idx, bmc_raptor_route_bag_t& bag);
+  void get_earliest_sufficient_transports(std::uint32_t bag_idx,
+                                          std::uint16_t departure,
+                                          std::uint16_t arr_with_transfer,
+                                          search_bitfield const& td_bitfield,
+                                          route_idx_t route_idx,
+                                          unsigned short stop_idx,
+                                          bmc_raptor_route_bag_t& bag);
 
   void update_footpaths(unsigned k);
   bool update_route(unsigned k, route_idx_t r);
@@ -140,9 +144,9 @@ struct bmc_raptor {
 
   timetable_view const& tt_view_;
   bmc_raptor_state& state_;
-  bitvec const& destination_mask_; // Indexed by source location_idx_t
-  bitvec const& transfer_mask_;    // Indexed by source location_idx_t
-  bitvec const& footpath_mask_;    // Indexed by source location_idx_t
+  bitvec const& destination_mask_;  // Indexed by source location_idx_t
+  bitvec const& transfer_mask_;  // Indexed by source location_idx_t
+  bitvec const& footpath_mask_;  // Indexed by source location_idx_t
   bitset<kMaxDays> const tt_day_mask_;
 };
 

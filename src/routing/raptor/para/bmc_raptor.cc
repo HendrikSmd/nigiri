@@ -135,8 +135,10 @@ bool bmc_raptor::add_to_route_bag(bmc_raptor_route_bag_t& bag,
   return bag.add<dom>(label, bf);
 }
 
-void bmc_raptor::init_location_with_offset(location_idx_view_t const location_idx_view,
-                                           duration_t const minutes_to_arrive) {
+void bmc_raptor::init_location_with_offset(
+    location_idx_view_t const location_idx_view,
+    duration_t const minutes_to_arrive,
+    bool const is_initial_fp) {
   if (minutes_to_arrive > kMaxTravelTime) {
     return;
   }
@@ -145,17 +147,17 @@ void bmc_raptor::init_location_with_offset(location_idx_view_t const location_id
 
 #ifdef NIGIRI_ENABLE_SIMD
   bmc_round_meta_data initial_md{
-    .route_idx_ = 0U,
-    .parent_bag_idx_ = 0U,
-    .enter_stop_idx_ = 0U,
-    .exit_stop_idx_ = 0U,
-    .has_parent_ = 0,
-    .is_footpath_ = static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0)
-  };
+      .route_idx_ = 0U,
+      .parent_bag_idx_ = 0U,
+      .enter_stop_idx_ = 0U,
+      .exit_stop_idx_ = 0U,
+      .has_parent_ = 0,
+      .is_footpath_ = static_cast<uint16_t>(is_initial_fp ? 1 : 0)};
 #endif
 
   const auto& tt = tt_view_.get_source_tt();
-  location_idx_t const source_location_idx = tt_view_.get_source_idx(location_idx_view);
+  location_idx_t const source_location_idx =
+      tt_view_.get_source_idx(location_idx_view);
   utl::verify(source_location_idx != location_idx_t::invalid(),
               "Unmapped location found");
   for (auto const r : tt.location_routes_[source_location_idx]) {
@@ -229,8 +231,7 @@ void bmc_raptor::init_location_with_offset(location_idx_view_t const location_id
            .arrival_with_transfer_ =
                static_cast<std::uint16_t>(i + minutes_to_arrive.count()),
            .departure_ = i,
-           .is_footpath_ =
-               static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0),
+           .is_footpath_ = static_cast<uint16_t>(is_initial_fp ? 1 : 0),
            .has_parent_ = 0},
           minute_bf);
 #endif
@@ -246,7 +247,7 @@ void bmc_raptor::init_starts(location_idx_view_t const location_idx,
   location_idx_t source_location_idx = tt_view_.get_source_idx(location_idx);
   utl::verify(source_location_idx != location_idx_t::invalid(),
               "Unmapped location");
-  init_location_with_offset(location_idx, 0_minutes);
+  init_location_with_offset(location_idx, 0_minutes, false);
   if (use_initial_fp) {
     auto const& out_fps = tt_view_.get_source_tt().locations_.footpaths_out_[kDefaultProfile];
     auto const loc_out_fps = out_fps[source_location_idx];
@@ -258,7 +259,7 @@ void bmc_raptor::init_starts(location_idx_view_t const location_idx,
       }
 
       init_location_with_offset(tt_view_.get_view_idx(fp.target()),
-                                fp.duration());
+                                fp.duration(), true);
     }
   }
 }
