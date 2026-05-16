@@ -7,6 +7,7 @@
 #include "boost/program_options.hpp"
 
 #include "nigiri/loader/load.h"
+#include "nigiri/common/clique.h"
 #include "nigiri/routing/pareto_set.h"
 #include "nigiri/routing/raptor/para/customization.h"
 #include "nigiri/routing/raptor/para/export_partition.h"
@@ -57,13 +58,14 @@ pareto_set<routing::journey> raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 5> sub_commands = {
+  static constexpr std::array<sub_command, 6> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
       {"export-partition", "exports a partition in a supported format"},
       {"start-customization", "start the customization process"},
-      {"inspect-rank-store", "outputs information on the given rank store"}
+      {"inspect-rank-store", "outputs information on the given rank store"},
+      {"clique-cover", "computing a clique cover for the foot-graph of the given timetable"}
     }
   };
 
@@ -341,6 +343,36 @@ int main(int argc, char** argv) {
     bpo::notify(cvm);
     auto store = *routing::para::route_rank_store::read(in_store);
     store.print_summary(std::cout);
+  } else if (command == "clique-cover") {
+    auto in_tt = fs::path{};
+
+    bpo::options_description start_custom_desc("clique-cover options");
+    start_custom_desc.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable");
+
+
+    if (vm.contains("help")) {
+      std::cout << start_custom_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(start_custom_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    {
+      auto const timer = scoped_timer("Computing clique cover");
+      auto const cliques = clique_cover(tt);
+      std::cout << "Number of cliques: " << cliques.size()
+                << " vs. Number of components: "
+                << tt.component_locations_.size() << " vs. Number of locations "
+                << tt.n_locations() << std::endl;
+    }
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }

@@ -174,6 +174,7 @@ using location_idx_t = cista::strong<std::uint32_t, struct _location_idx>;
 using location_idx_view_t = cista::strong<std::uint32_t, struct _location_idx_view>;
 using cmpnt_loc_idx_t = cista::strong<std::uint16_t, struct _cmpnt_loc_idx>;
 using component_idx_t = cista::strong<std::uint32_t, struct component_idx_>;
+using clique_idx_t = cista::strong<std::uint32_t, struct clique_idx_>;
 using route_idx_t = cista::strong<std::uint32_t, struct _route_idx>;
 using route_idx_view_t = cista::strong<std::uint32_t, struct _route_idx_view>;
 using cell_idx_t = cista::strong<std::uint16_t, struct _cell_idx>;
