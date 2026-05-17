@@ -154,22 +154,14 @@ std::vector<bitvec> clique_cover(adjacency_matrix const& matrix) {
 vecvec<clique_idx_t, location_idx_t> clique_cover(timetable const& tt) {
   const auto lookup = get_location_to_component_idx_lookup(tt);
   const auto n_components = tt.component_locations_.size();
-  std::vector<std::future<component_clique_cover>> futures;
-  futures.reserve(n_components);
-
-  for (auto c = component_idx_t{0U}; c < n_components; ++c) {
-    futures.push_back(std::async(std::launch::async, [&tt, &lookup, c]() {
-      auto const matrix = build_component_footgraph(tt, c, lookup);
-      auto cliques = clique_cover(matrix);
-      return component_clique_cover{c, std::move(cliques)};
-    }));
-  }
 
   std::vector<component_clique_cover> collected;
   collected.reserve(n_components);
 
-  for (auto& fut : futures) {
-    collected.push_back(fut.get());
+  for (auto c = component_idx_t{0U}; c < n_components; ++c) {
+      auto const matrix = build_component_footgraph(tt, c, lookup);
+      auto cliques = clique_cover(matrix);
+      collected.emplace_back(c, std::move(cliques));
   }
 
   std::ranges::sort(collected, std::less{},
