@@ -58,14 +58,15 @@ pareto_set<routing::journey> raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 6> sub_commands = {
+  static constexpr std::array<sub_command, 7> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
       {"export-partition", "exports a partition in a supported format"},
       {"start-customization", "start the customization process"},
       {"inspect-rank-store", "outputs information on the given rank store"},
-      {"clique-cover", "computing a clique cover for the foot-graph of the given timetable"}
+      {"clique-cover", "computing a clique cover for the foot-graph of the given timetable"},
+      {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"}
     }
   };
 
@@ -372,6 +373,60 @@ int main(int argc, char** argv) {
                 << " vs. Number of components: "
                 << tt.component_locations_.size() << " vs. Number of locations "
                 << tt.n_locations() << std::endl;
+    }
+  } else if (command == "check-fp-transitivity") {
+    auto in_tt = fs::path{};
+
+    bpo::options_description start_custom_desc("check-fp-transitivity options");
+    start_custom_desc.add_options()("in_tt", bpo::value(&in_tt),
+                                    "path to the timetable with the footpaths");
+
+    if (vm.contains("help")) {
+      std::cout << start_custom_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts =
+        bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(start_custom_desc).run(),
+               cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    size_t count = 0U;
+    size_t non_transitive = 0U;
+    for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+      const auto& first_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+      for (const auto& first_fp : first_fps) {
+        const auto middle_loc = first_fp.target();
+        const auto& second_fps = tt.locations_.footpaths_out_[kDefaultProfile][middle_loc];
+        for (const auto& second_fp : second_fps) {
+          const auto target_loc = second_fp.target();
+
+          if (loc == target_loc) {
+            continue;
+          }
+
+          auto const closure = std::find_if(first_fps.begin(), first_fps.end(),
+                                            [target_loc](auto const& fp) {
+                                              return fp.target() == target_loc;
+                                            });
+          if (closure == first_fps.end()) {
+            non_transitive++;
+          }
+          count++;
+        }
+      }
+    }
+
+    if (non_transitive == 0U) {
+      std::cout << "Footpaths are transitively closed!" << std::endl;
+    } else {
+      std::cout << "Found " << non_transitive << "/" << count << " many occurrences of non transitivity!" << std::endl;
     }
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
