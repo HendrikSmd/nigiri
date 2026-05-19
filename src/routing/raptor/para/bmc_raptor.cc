@@ -6,7 +6,6 @@
 
 #include "nigiri/common/linear_lower_bound.h"
 #include "nigiri/routing/raptor/para/routing_time.h"
-#include "nigiri/routing/raptor/para/simd_dominance_relations.h"
 #include "nigiri/stop.h"
 #include "nigiri/types.h"
 
@@ -40,35 +39,6 @@ bitset<kMaxDays> bmc_raptor::get_tt_day_mask(timetable const& tt) {
   return bitset<kMaxDays>{std::string(to_idx(n_days_in_tt), '1')};
 }
 
-#ifdef NIGIRI_ENABLE_SIMD
-
-bool bmc_raptor::add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
-                                           std::array<std::uint16_t, 3> const& label,
-                                           bmc_round_meta_data const& meta_data,
-                                           search_bitfield sbf) {
-  return bag.add<bicriteria_dominance_16>(label, sbf, meta_data);
-}
-
-bool bmc_raptor::add_to_dest_round_bag(bmc_raptor_bag_t& bag,
-                                  std::array<std::uint16_t, 3> const& label,
-                                  bmc_round_meta_data const& meta_data,
-                                  search_bitfield sbf) {
-  return bag.add<bicriteria_conservative_dominance_16>(label, sbf, meta_data);
-}
-
-void bmc_raptor::filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
-                                        std::array<std::uint16_t, 3> const& label,
-                                        search_bitfield& sbf) {
-  bag.filter_dominated<bicriteria_dominance_16>(label, sbf);
-}
-
-void bmc_raptor::filter_by_dest_bag(bmc_raptor_bag_t const& bag,
-                                    std::array<std::uint16_t, 3> const& label,
-                                    search_bitfield& sbf) {
-  bag.filter_dominated<bicriteria_conservative_dominance_16>(label, sbf);
-}
-#else
-
 bool bmc_raptor::dominates_destination(bmc_raptor_label const& l1,
                                        bmc_raptor_label const& l2) {
   return l1.dominates_destination(l2);
@@ -77,6 +47,16 @@ bool bmc_raptor::dominates_destination(bmc_raptor_label const& l1,
 bool bmc_raptor::dominates_non_destination(bmc_raptor_label const& l1,
                                            bmc_raptor_label const& l2) {
   return l1.dominates_non_destination(l2);
+}
+
+bool bmc_raptor::dominates_destination_skip_fps(bmc_raptor_label const& l1,
+                                                bmc_raptor_label const& l2) {
+  return l1.is_footpath_ != 1 && l1.dominates_destination(l2);
+}
+
+bool bmc_raptor::dominates_non_destination_skip_fps(bmc_raptor_label const& l1,
+                                                    bmc_raptor_label const& l2) {
+  return l1.is_footpath_ != 1 && l1.dominates_non_destination(l2);
 }
 
 void bmc_raptor::cleanup_after_footpaths_at_dest(bmc_raptor_bag_t& bag) {
@@ -110,19 +90,6 @@ bool bmc_raptor::add_to_dest_round_bag(bmc_raptor_bag_t& bag,
   return bag.add<&dominates_destination>(label, bf);
 }
 
-void bmc_raptor::filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
-                                        bmc_raptor_label const& label,
-                                        search_bitfield& sbf) {
-  bag.filter_dominated<&dominates_non_destination>(label, sbf);
-}
-
-void bmc_raptor::filter_by_dest_bag(bmc_raptor_bag_t const& bag,
-                                    bmc_raptor_label const& label,
-                                    search_bitfield& sbf) {
-  bag.filter_dominated<&dominates_destination>(label, sbf);
-}
-#endif
-
 bool bmc_raptor::add_to_route_bag(bmc_raptor_route_bag_t& bag,
                                   bmc_raptor_route_label label,
                                   search_bitfield bf) {
@@ -138,17 +105,6 @@ void bmc_raptor::init_location_with_offset(location_idx_view_t const location_id
   if (minutes_to_arrive > kMaxTravelTime) {
     return;
   }
-
-#ifdef NIGIRI_ENABLE_SIMD
-  bmc_round_meta_data initial_md{
-    .route_idx_ = 0U,
-    .parent_bag_idx_ = 0U,
-    .enter_stop_idx_ = 0U,
-    .exit_stop_idx_ = 0U,
-    .has_parent_ = 0,
-    .is_footpath_ = static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0)
-  };
-#endif
 
   const auto& tt = tt_view_.get_source_tt();
   location_idx_t const source_location_idx = tt_view_.get_source_idx(location_idx_view);
@@ -199,29 +155,19 @@ void bmc_raptor::init_location_with_offset(location_idx_view_t const location_id
         const auto arrival_t = static_cast<uint16_t>(normalized_start_time_mam + minutes_to_arrive.count());
 
         if (label_bf.any()) {
-#ifdef NIGIRI_ENABLE_SIMD
           bool const added = add_to_non_dest_round_bag(
               state_.round_bags_[0U][to_idx(location_idx_view)],
-              { static_cast<uint16_t>(normalized_start_time_mam), arrival_t, arrival_t },
-              initial_md,
-              label_bf
-          );
-#else
-          bool const added = add_to_non_dest_round_bag(
-              state_.round_bags_[0U][to_idx(location_idx_view)],
-              {
-                .route_idx_ = 0U,
-                .enter_stop_idx_ = 0U,
-                .exit_stop_idx_ = 0U,
-                .arrival_ = arrival_t,
-                .parent_bag_idx_ = 0U,
-                .arrival_with_transfer_ = arrival_t,
-                .departure_ = static_cast<uint16_t>(normalized_start_time_mam),
-                .is_footpath_ = static_cast<uint16_t>((minutes_to_arrive > 0_minutes) ? 1 : 0),
-                .has_parent_ = 0
-              },
+              {.route_idx_ = 0U,
+               .enter_stop_idx_ = 0U,
+               .exit_stop_idx_ = 0U,
+               .arrival_ = arrival_t,
+               .parent_bag_idx_ = 0U,
+               .arrival_with_transfer_ = arrival_t,
+               .departure_ = static_cast<uint16_t>(normalized_start_time_mam),
+               .is_footpath_ = static_cast<uint16_t>(
+                   (minutes_to_arrive > 0_minutes) ? 1 : 0),
+               .has_parent_ = 0},
               label_bf);
-#endif
           if (added) {
             state_.station_mark_.set(to_idx(location_idx_view), true);
           }
@@ -338,9 +284,6 @@ void bmc_raptor::get_earliest_sufficient_transports(
 
 void bmc_raptor::update_footpaths(unsigned const k) {
   const auto& tt = tt_view_.get_source_tt();
-#ifdef NIGIRI_ENABLE_SIMD
-  std::array<std::uint16_t, 3> new_fields_buff = {0,0,0};
-#endif
 
   state_.station_mark_.for_each_set_bit([&](std::uint32_t const i) {
     auto const& round_bag = state_.round_bags_[k][i];
@@ -350,21 +293,13 @@ void bmc_raptor::update_footpaths(unsigned const k) {
 
     auto const fps = tt.locations_.footpaths_out_[kDefaultProfile][source_location_idx];
     for (auto rl_view : round_bag) {
-#ifdef NIGIRI_ENABLE_SIMD
-      if (rl_view.metadata_.is_footpath_ == 1) {
-        continue;
-      }
-      auto const base_arr = rl_view.fields_[1];
-      auto const dep = rl_view.fields_[0];
-#else
-      if (rl_view.label_.is_footpath_ == 1) {
-        // All remaining labels are footpaths
-        break;
-      }
+    if (rl_view.label_.is_footpath_ == 1) {
+      // All remaining labels are footpaths
+      break;
+    }
 
-      auto const base_arr = rl_view.label_.arrival_;
-      auto const dep = rl_view.label_.departure_;
-#endif
+    auto const base_arr = rl_view.label_.arrival_;
+    auto const dep = rl_view.label_.departure_;
 
       for (auto const& fp : fps) {
         auto const target = fp.target();
@@ -379,13 +314,6 @@ void bmc_raptor::update_footpaths(unsigned const k) {
         if (arr_with_foot - dep > kMaxTravelTime.count()) {
           continue;
         }
-
-#ifdef NIGIRI_ENABLE_SIMD
-        new_fields_buff[0] = dep;
-        new_fields_buff[1] = arr_with_foot;
-        new_fields_buff[2] = arr_with_foot;
-        auto tdb = rl_view.bitset_;
-#else
         const bmc_raptor_label label_with_foot{
             .route_idx_ = rl_view.label_.route_idx_,
             .enter_stop_idx_ = rl_view.label_.enter_stop_idx_,
@@ -406,36 +334,18 @@ void bmc_raptor::update_footpaths(unsigned const k) {
 
         bool const is_target_destination = destination_mask_[to_idx(target)];
 
-#endif
         if (is_target_destination) {
-#ifdef NIGIRI_ENABLE_SIMD
-          filter_by_dest_bag(state_.best_bags_[to_idx(target_view_idx)], new_fields_buff, tdb);
-#else
-          filter_by_dest_bag(state_.best_bags_[to_idx(target_view_idx)], label_with_foot, tdb);
-#endif
+          filter_by_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
+                                    label_with_foot, tdb);
         } else {
-#ifdef NIGIRI_ENABLE_SIMD
-          filter_by_non_dest_bag(state_.best_bags_[to_idx(target_view_idx)], new_fields_buff, tdb);
-#else
-          filter_by_non_dest_bag(state_.best_bags_[to_idx(target_view_idx)], label_with_foot, tdb);
-#endif
+          filter_by_non_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
+                                        label_with_foot, tdb);
         }
 
         if (tdb.none()) {
           continue;
         }
 
-#ifdef NIGIRI_ENABLE_SIMD
-        bmc_round_meta_data const with_foot_md{
-          .route_idx_ = rl_view.metadata_.route_idx_,
-          .parent_bag_idx_ = rl_view.metadata_.parent_bag_idx_,
-          .enter_stop_idx_ = rl_view.metadata_.enter_stop_idx_,
-          .exit_stop_idx_ = rl_view.metadata_.exit_stop_idx_,
-          .has_parent_ = rl_view.metadata_.has_parent_,
-          .is_footpath_ = 1,
-        };
-        state_.fps_buffers_[to_idx(target_view_idx)].emplace_back(new_fields_buff, with_foot_md, tdb);
-#else
         if (to_idx(target_view_idx) < i) {
           bool added = false;
           if (is_target_destination) {
@@ -466,7 +376,6 @@ void bmc_raptor::update_footpaths(unsigned const k) {
             state_.station_mark_.set(to_idx(target_view_idx), true);
           }
         }
-#endif
       }
     }
   });
@@ -487,9 +396,6 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
   const auto& tt = tt_view_.get_source_tt();
   bool any_marked = false;
   auto const& stop_sequence = tt.route_location_seq_[route_idx];
-#ifdef NIGIRI_ENABLE_SIMD
-  std::array<std::uint16_t, 3> new_fields_buff = {0,0,0};
-#endif
 
   bmc_raptor_route_bag_t route_bag{};
   for (stop_idx_t stop_idx = 0U; stop_idx != stop_sequence.size(); ++stop_idx) {
@@ -523,11 +429,6 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
         continue;
       }
 
-#ifdef NIGIRI_ENABLE_SIMD
-      new_fields_buff[0] = static_cast<uint16_t>(active_label.label_.departure_);
-      new_fields_buff[1] = static_cast<uint16_t>(new_arr);
-      new_fields_buff[2] = static_cast<uint16_t>(new_arr + transfer_time_offset);
-#else
       const auto candidate_lbl = bmc_raptor_label{
         .route_idx_ = to_idx(route_idx),
         .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
@@ -540,52 +441,31 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
         .is_footpath_ = 0,
         .has_parent_ = 1
       };
-#endif
 
       auto candidate_tdb = active_label.tdb_;
 
       if (is_destination) {
-#ifdef NIGIRI_ENABLE_SIMD
-        filter_by_dest_bag(state_.best_bags_[to_idx(view_location_idx)], new_fields_buff, candidate_tdb);
-#else
-        filter_by_dest_bag(state_.best_bags_[to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-#endif
+        filter_by_dest_bag<true>(
+            state_.best_bags_[to_idx(view_location_idx)],
+            candidate_lbl, candidate_tdb);
       } else {
-#ifdef NIGIRI_ENABLE_SIMD
-        filter_by_non_dest_bag(state_.best_bags_[to_idx(view_location_idx)], new_fields_buff, candidate_tdb);
-#else
-        filter_by_non_dest_bag(state_.best_bags_[to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-#endif
+        filter_by_non_dest_bag<true>(
+            state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
+            candidate_tdb);
       }
 
       if (candidate_tdb.none()) {
+        if (to_idx(route_idx) == 2548 && to_idx(source_location_idx) == 4969) {
+          std::cout << new_arr << std::endl;
+        }
         continue;
       }
 
-#ifdef NIGIRI_ENABLE_SIMD
-      bmc_round_meta_data const new_md {
-        .route_idx_ = to_idx(route_idx),
-        .parent_bag_idx_ = active_label.label_.parent_bag_idx_,
-        .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
-        .exit_stop_idx_ = stop_idx,
-        .has_parent_ = 1,
-        .is_footpath_ = 0
-      };
-#endif
-
       bool added = false;
       if (is_destination) {
-#ifdef NIGIRI_ENABLE_SIMD
-        added = add_to_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], new_fields_buff, new_md, candidate_tdb);
-#else
         added = add_to_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-#endif
       } else {
-#ifdef NIGIRI_ENABLE_SIMD
-        added = add_to_non_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], new_fields_buff, new_md, candidate_tdb);
-#else
         added = add_to_non_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-#endif
       }
       if (added) {
         state_.station_mark_.set(to_idx(view_location_idx), true);
@@ -599,23 +479,12 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
 
     if (stp.in_allowed() && state_.prev_station_mark_[to_idx(view_location_idx)]) {
       const auto& scan_bag = state_.round_bags_[k - 1][to_idx(view_location_idx)];
-#ifdef NIGIRI_ENABLE_SIMD
-      for (auto bag_iter = scan_bag.begin(); bag_iter != scan_bag.end();
-           ++bag_iter) {
-        auto const iter_view = *bag_iter;
-        get_earliest_sufficient_transports(
-            static_cast<std::uint32_t>(bag_iter.index_), iter_view.fields_[0],
-            iter_view.fields_[2], iter_view.bitset_, route_idx, stop_idx,
-            route_bag);
-      }
-#else
       for (const auto [i, l] : utl::enumerate(scan_bag)) {
         get_earliest_sufficient_transports(
             static_cast<std::uint32_t>(i), l.label_.departure_,
             l.label_.arrival_with_transfer_, l.tdb_, route_idx, stop_idx,
             route_bag);
       }
-#endif
     }
   }
   return any_marked;
@@ -633,19 +502,13 @@ void bmc_raptor::rounds() {
 
       bool is_destination = destination_mask_[to_idx(source_location_idx)];
       if (state_.station_mark_[to_idx(location_view_idx)]) {
-        for (auto const l : state_.round_bags_[k - 1][to_idx(location_view_idx)]) {
-          if (is_destination) {
-#ifdef NIGIRI_ENABLE_SIMD
-            add_to_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)], l.fields_, l.metadata_, l.bitset_);
-#else
-            add_to_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)], l.label_, l.tdb_);
-#endif
-          } else {
-#ifdef NIGIRI_ENABLE_SIMD
-            add_to_non_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)],l.fields_, l.metadata_, l.bitset_);
-#else
-            add_to_non_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)],l.label_, l.tdb_);
-#endif
+        if (k > 1) {
+          for (auto const l : state_.round_bags_[k - 1][to_idx(location_view_idx)]) {
+            if (is_destination) {
+              add_to_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)], l.label_, l.tdb_);
+            } else {
+              add_to_non_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)],l.label_, l.tdb_);
+            }
           }
         }
         any_marked = true;
@@ -705,20 +568,12 @@ void bmc_raptor::gather_journeys() {
       for (auto label_it = round_bag.begin(); label_it != round_bag.end();
            ++label_it) {
 
-#ifdef NIGIRI_ENABLE_SIMD
-        auto const label_view = *label_it;
-        auto const label_fields = label_view.fields_;
-        auto const& lbf = label_view.bitset_;
+        auto const& label = label_it->label_;
+        auto const& lbf = label_it->tdb_;
 
-        const auto departure = label_fields[0];
-        const auto arrival = label_fields[1];
-#else
-        const auto& label = label_it->label_;
-        const auto& lbf = label_it->tdb_;
+        auto const departure = label.departure_;
+        auto const arrival = label.departure_;
 
-        const auto departure = label.departure_;
-        const auto arrival = label.departure_;
-#endif
 
         if (duration_t const travel_time{arrival - departure};
             travel_time >= fastest_direct) {
@@ -768,20 +623,6 @@ void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx
     for (auto label_it = round_bag.begin(); label_it != round_bag.end();
          ++label_it) {
       auto const label_view = *label_it;
-#ifdef NIGIRI_ENABLE_SIMD
-      auto const& tdb = label_view.bitset_;
-      tdb.for_each_set_bit([&](size_t const i) {
-        pareto_utils<bmc_journey>::pareto_add(
-            bag,
-            {.arrival_ = routing_time{static_cast<int>(i * 1440 +
-                                                       label_view.fields_[1])},
-             .departure_ = routing_time{static_cast<int>(
-                 i * 1440 + label_view.fields_[0])},
-             .transfers_ = static_cast<std::uint16_t>(k > 0 ? k - 1 : 0U),
-             .label_iter_ = label_it},
-            dom);
-      });
-#else
       auto const& tdb = label_view.tdb_;
       tdb.for_each_set_bit([&](size_t const i) {
         pareto_utils<bmc_journey>::pareto_add(
@@ -794,7 +635,6 @@ void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx
              .label_iter_ = label_it},
             dom);
       });
-#endif
     }
   }
 }

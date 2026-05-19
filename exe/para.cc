@@ -9,6 +9,7 @@
 #include "nigiri/loader/load.h"
 #include "nigiri/common/clique.h"
 #include "nigiri/routing/pareto_set.h"
+#include "nigiri/routing/raptor/para/bmc_raptor.h"
 #include "nigiri/routing/raptor/para/customization.h"
 #include "nigiri/routing/raptor/para/export_partition.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
@@ -54,6 +55,43 @@ pareto_set<routing::journey> raptor_search(
   return *(routing::raptor_search(tt, nullptr, search_state, algo_state,
                                   std::move(q), direction::kForward)
                .journeys_);
+}
+
+pareto_set<routing::journey> para_raptor_search(
+    timetable const& tt, routing::para::route_rank_store const& rs, routing::query q) {
+  using namespace nigiri;
+  using algo_state_t = routing::raptor_state;
+  static auto search_state = routing::search_state{};
+  static auto algo_state = algo_state_t{};
+
+  return *(routing::para_raptor_search(tt, rs, search_state, algo_state,
+                                       std::move(q), std::nullopt)
+               .journeys_);
+}
+
+std::vector<routing::para::bmc_journey> bmc_raptor_search(
+    timetable const& tt, routing::query q) {
+  using namespace nigiri;
+  routing::para::bmc_raptor_state state;
+  bitvec route_mask = bitvec::max(tt.n_routes());
+  bitvec transfer_mask = bitvec::max(tt.n_locations());
+  bitvec destination_mask(tt.n_locations());
+  routing::para::timetable_view tt_view(tt, route_mask);
+
+  routing::para::bmc_raptor raptor(
+    tt_view, state, destination_mask, transfer_mask);
+
+  const auto start_loc = q.start_.front().target();
+  const auto dest_loc = q.destination_.front().target();
+
+  destination_mask.set(to_idx(dest_loc), true);
+  raptor.init_starts(tt_view.get_view_idx(start_loc), true);
+
+  raptor.rounds();
+
+  std::vector<routing::para::bmc_journey> result;
+  raptor.emplace_relative_journeys_for(tt_view.get_view_idx(dest_loc), result);
+  return result;
 }
 
 int main(int argc, char** argv) {
@@ -427,6 +465,58 @@ int main(int argc, char** argv) {
       std::cout << "Footpaths are transitively closed!" << std::endl;
     } else {
       std::cout << "Found " << non_transitive << "/" << count << " many occurrences of non transitivity!" << std::endl;
+    }
+  } else if (command == "route") {
+    auto in_tt = fs::path{};
+    auto in_rs = fs::path{};
+
+    bpo::options_description start_custom_desc("route options");
+    start_custom_desc.add_options()
+      ("in_tt", bpo::value(&in_tt), "path to the timetable")
+      ("in_rs", bpo::value(&in_rs), "path to the route rank store");
+
+    if (vm.contains("help")) {
+      std::cout << start_custom_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts =
+        bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(start_custom_desc).run(),
+               cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto rs = *routing::para::route_rank_store::read(in_rs);
+
+    interval<unixtime_t> start_time = {
+      .from_ = sys_days(2026_y / March / 16_d) + 15_hours +  56_minutes,
+      .to_ = sys_days(2026_y / March / 16_d) + 17_hours + 56_minutes,
+    };
+
+    const auto start_loc = location_idx_t{123215};
+    const auto dest_loc = location_idx_t{93506};
+
+    routing::query q = {
+      .start_time_ = start_time,
+      .use_start_footpaths_ = true,
+      .start_ = {{start_loc, 0_minutes, 0U}},
+      .destination_ = {{dest_loc, 0_minutes, 0U}}
+    };
+
+    auto res = raptor_search(tt, q);
+    std::cout << res.size() << std::endl;
+    for (auto& j : res) {
+      j.print(std::cout, tt);
+    }
+    std::cout << "bmc raptor:" << std::endl;
+    auto res_bmc = bmc_raptor_search(tt, q);
+    for (const auto j : res_bmc) {
+      std::cout << "dep: " << j.departure_.to_unixtime(tt) << ", arr: " << j.arrival_.to_unixtime(tt) << " transfers: " << j.transfers_ << std::endl;
     }
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;

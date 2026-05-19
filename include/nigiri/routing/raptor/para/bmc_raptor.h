@@ -23,26 +23,6 @@ struct bmc_raptor {
   bmc_raptor(timetable_view const& tt_view, bmc_raptor_state& state,
              bitvec const& destination_mask, bitvec const& transfer_mask);
 
-#ifdef NIGIRI_ENABLE_SIMD
-  static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
-                                        std::array<std::uint16_t, 3> const& label,
-                                        bmc_round_meta_data const& meta_data,
-                                        search_bitfield sbf);
-
-  static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
-                                    std::array<std::uint16_t, 3> const& label,
-                                    bmc_round_meta_data const& meta_data,
-                                    search_bitfield sbf);
-
-  static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
-                                     std::array<std::uint16_t, 3> const& label,
-                                     search_bitfield& sbf);
-
-  static void filter_by_dest_bag(bmc_raptor_bag_t const& bag,
-                                 std::array<std::uint16_t, 3> const& label,
-                                 search_bitfield& sbf);
-#else
-
   template <auto dominates>
   static void cleanup_after_footpaths_added(bmc_raptor_bag_t& bag) {
     for (size_t fp_i = bag.labels_.size() - 1; fp_i > 0; --fp_i) {
@@ -74,9 +54,17 @@ struct bmc_raptor {
     std::erase_if(bag.labels_, [](const auto& label){ return label.tdb_.none(); });
   }
 
-  static bool dominates_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+  static bool dominates_destination(bmc_raptor_label const& l1,
+                                    bmc_raptor_label const& l2);
 
-  static bool dominates_non_destination(bmc_raptor_label const& l1, bmc_raptor_label const& l2);
+  static bool dominates_non_destination(bmc_raptor_label const& l1,
+                                        bmc_raptor_label const& l2);
+
+  static bool dominates_destination_skip_fps(bmc_raptor_label const& l1,
+                                             bmc_raptor_label const& l2);
+
+  static bool dominates_non_destination_skip_fps(bmc_raptor_label const& l1,
+                                                 bmc_raptor_label const& l2);
 
   static bool dominates(bmc_raptor_label const& l1, bmc_raptor_label const& l2) {
     return l1.dominates_destination(l2);
@@ -102,14 +90,27 @@ struct bmc_raptor {
                                     bmc_raptor_label const& label,
                                     search_bitfield sbf);
 
+  template<bool skip_bag_arrivals_with_fps>
   static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
                                      bmc_raptor_label const& label,
-                                     search_bitfield& sbf);
+                                     search_bitfield& sbf) {
+    if constexpr (skip_bag_arrivals_with_fps) {
+      bag.filter_dominated<&dominates_non_destination_skip_fps>(label, sbf);
+    } else {
+      bag.filter_dominated<&dominates_non_destination>(label, sbf);
+    }
+  }
 
+  template<bool skip_bag_arrivals_with_fps>
   static void filter_by_dest_bag(bmc_raptor_bag_t const& bag,
                                  bmc_raptor_label const& label,
-                                 search_bitfield& sbf);
-#endif
+                                 search_bitfield& sbf) {
+    if constexpr (skip_bag_arrivals_with_fps) {
+      bag.filter_dominated<&dominates_destination_skip_fps>(label, sbf);
+    } else {
+      bag.filter_dominated<&dominates_destination>(label, sbf);
+    }
+  }
 
   static bool add_to_route_bag(bmc_raptor_route_bag_t& bag,
                                bmc_raptor_route_label label,
