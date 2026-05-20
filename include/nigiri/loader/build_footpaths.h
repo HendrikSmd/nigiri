@@ -14,5 +14,6 @@ struct finalize_options {
 void build_footpaths(timetable& tt, finalize_options);
 
 void write_final_components(timetable& tt);
+void write_transitivity_marks(timetable& tt);
 
 }  // namespace nigiri::loader

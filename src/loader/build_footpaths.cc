@@ -500,4 +500,39 @@ void write_final_components(timetable& tt) {
   }
 }
 
+void write_transitivity_marks(timetable& tt) {
+  tt.is_location_transitive_ = bitvec::max(tt.n_locations());
+  for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+    const auto& in_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+    bool transitive = true;
+    for (const auto& in_fp : in_fps) {
+      const auto prev_loc = in_fp.target();
+      const auto& out_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+      for (const auto& out_fp : out_fps) {
+        const auto next_loc = out_fp.target();
+
+        if (prev_loc == next_loc) {
+          continue;
+        }
+
+        const auto& prev_out_fps = tt.locations_.footpaths_out_[kDefaultProfile][prev_loc];
+        auto const closure = std::find_if(prev_out_fps.begin(), prev_out_fps.end(),
+                                          [next_loc](auto const& fp) {
+                                            return fp.target() == next_loc;
+                                          });
+        if (closure == prev_out_fps.end()) {
+          transitive = false;
+          break;
+        }
+      }
+      if (!transitive) {
+        break;
+      }
+    }
+    if (!transitive) {
+      tt.is_location_transitive_.set(to_idx(loc), false);
+    }
+  }
+}
+
 }  // namespace nigiri::loader
