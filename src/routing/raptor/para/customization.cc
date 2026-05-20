@@ -48,9 +48,13 @@ route_rank_store const& customizer::construct_route_rank_store(route_partition p
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)); ++cell_idx) {
       auto cut_cmpnt_bin_range_iter = start_times_registry_.cell_cmpnt_search_bins_[to_idx(cell_idx)].cbegin();
       cell_cut_cmpnts_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
-        tasks.emplace_back(cell_idx, component_idx_t{idx}, level, cut_cmpnt_bin_range_iter, atomic_ranks);
+        const auto [bin_from, bin_to] = *cut_cmpnt_bin_range_iter;
+        for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
+          tasks.emplace_back(cell_idx, component_idx_t{idx}, level, bin_i, atomic_ranks);
+        }
         ++cut_cmpnt_bin_range_iter;
       });
+
     }
     if constexpr (search_algo == search_algorithm::mc_raptor) {
       utl::parallel_for_run_threadlocal<mc_raptor_state>(tasks.size(), [&](auto& state, auto const t_idx) {
@@ -80,7 +84,7 @@ void customizer::log_progress(std::vector<std::atomic<size_t>> const& cell_progr
     std::cout << "Progress Update:\n";
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < static_cast<cista::base_t<cell_idx_t>>(cell_cut_cmpnts_.size()); ++cell_idx) {
       const size_t progress = cell_progress[to_idx(cell_idx)];
-      const auto limit = cell_cut_cmpnts_[cista::to_idx(cell_idx)].count();
+      const auto limit = start_times_registry_.bin_start_idxs_[cista::to_idx(cell_idx)].size() - 1;
       if (progress == 0) {
         continue;
       }
@@ -243,66 +247,78 @@ void customizer::unite_cut_cmpnts() {
   binary_or_reduce(cell_cut_cmpnts_);
 }
 
-void customizer::cut_routing_task(const thread_task& task,
-                                  local_thread_context& context,
-                                  std::vector<std::atomic<size_t>>& cell_progress) {
+void customizer::cut_routing_task(
+    thread_task const& task,
+    local_thread_context& context,
+    std::vector<std::atomic<size_t>>& cell_progress) {
 #ifdef NIGIRI_ENABLE_SIMD
-  bmc_round_meta_data initial_md{
-    .route_idx_ = 0U,
-    .parent_bag_idx_ = 0U,
-    .enter_stop_idx_ = 0U,
-    .exit_stop_idx_ = 0U,
-    .has_parent_ = 0,
-    .is_footpath_ = 0
-  };
+  bmc_round_meta_data initial_md{.route_idx_ = 0U,
+                                 .parent_bag_idx_ = 0U,
+                                 .enter_stop_idx_ = 0U,
+                                 .exit_stop_idx_ = 0U,
+                                 .has_parent_ = 0,
+                                 .is_footpath_ = 0};
 #endif
 
   const auto cut_cmpnt_from = task.component_idx_;
-  const auto cell = task.cell_idx_;
-  const auto level = task.level_;
+  auto const cell = task.cell_idx_;
+  auto const level = task.level_;
+  auto const bin_index = task.bin_idx_;
 
   if (context.last_cell_idx_ != cell) {
     context.tt_view_.index(route_masks_[to_idx(cell)]);
   }
 
-  const auto [bin_from, bin_to] = *task.iter_;
+  auto const bin_begin_idx =
+      start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_index];
+  auto const bin_end_idx =
+      start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_index + 1];
 
-  const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
-  for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
-    const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i];
-    const auto bin_end_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i + 1];
-    bmc_raptor raptor{context.tt_view_,
-                      context.state_,
-                      cell_cut_stops_[to_idx(cell)],
-                      transfer_masks_[to_idx(cell)]};
+  bmc_raptor raptor{context.tt_view_, context.state_,
+                    cell_cut_stops_[to_idx(cell)],
+                    transfer_masks_[to_idx(cell)]};
 
-    for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
-      const auto& rel_dep_event = start_times_registry_.cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
-      const location_idx_t from_loc_source_idx = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
-      const location_idx_view_t from_loc_view_idx = context.tt_view_.get_view_idx(from_loc_source_idx);
+  auto const& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
+  for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx;
+       ++dep_event_i) {
+    auto const& rel_dep_event =
+        start_times_registry_
+            .cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
+    location_idx_t const from_loc_source_idx =
+        cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
+    location_idx_view_t const from_loc_view_idx =
+        context.tt_view_.get_view_idx(from_loc_source_idx);
 
-      search_bitfield sbf;
-      truncate_to(rel_dep_event.active_days_, sbf);
-      const auto dep = static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count());
+    search_bitfield sbf;
+    truncate_to(rel_dep_event.active_days_, sbf);
+    auto const dep =
+        static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count());
 #ifdef NIGIRI_ENABLE_SIMD
-      bool added = bmc_raptor::add_to_non_dest_round_bag(
-        bmc_state.round_bags_[0U][to_idx(from_loc)],
-        {dep, dep, dep},
-        initial_md,
-        sbf
-      );
-      if (added) {
-        bmc_raptor::add_to_non_dest_round_bag(
-          bmc_state.best_bags_[to_idx(from_loc)],
-          {dep, dep, dep},
-          initial_md,
-          sbf
-        );
-        bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
-      }
+    bool added = bmc_raptor::add_to_non_dest_round_bag(
+        bmc_state.round_bags_[0U][to_idx(from_loc)], {dep, dep, dep},
+        initial_md, sbf);
+    if (added) {
+      bmc_raptor::add_to_non_dest_round_bag(
+          bmc_state.best_bags_[to_idx(from_loc)], {dep, dep, dep}, initial_md,
+          sbf);
+      bmc_state.station_mark_.set(cista::to_idx(from_loc), true);
+    }
 #else
-      bool added = bmc_raptor::add_to_non_dest_round_bag(
-          context.state_.round_bags_[0U][to_idx(from_loc_view_idx)],
+    bool added = bmc_raptor::add_to_non_dest_round_bag(
+        context.state_.round_bags_[0U][to_idx(from_loc_view_idx)],
+        {.route_idx_ = 0U,
+         .enter_stop_idx_ = 0U,
+         .exit_stop_idx_ = 0U,
+         .arrival_ = dep,
+         .parent_bag_idx_ = 0U,
+         .arrival_with_transfer_ = dep,
+         .departure_ = dep,
+         .is_footpath_ = 0,
+         .has_parent_ = 0},
+        sbf);
+    if (added) {
+      bmc_raptor::add_to_non_dest_round_bag(
+          context.state_.best_bags_[to_idx(from_loc_view_idx)],
           {.route_idx_ = 0U,
            .enter_stop_idx_ = 0U,
            .exit_stop_idx_ = 0U,
@@ -313,56 +329,36 @@ void customizer::cut_routing_task(const thread_task& task,
            .is_footpath_ = 0,
            .has_parent_ = 0},
           sbf);
-      if (added) {
-        bmc_raptor::add_to_non_dest_round_bag(
-            context.state_.best_bags_[to_idx(from_loc_view_idx)],
-            {.route_idx_ = 0U,
-             .enter_stop_idx_ = 0U,
-             .exit_stop_idx_ = 0U,
-             .arrival_ = dep,
-             .parent_bag_idx_ = 0U,
-             .arrival_with_transfer_ = dep,
-             .departure_ = dep,
-             .is_footpath_ = 0,
-             .has_parent_ = 0},
-            sbf);
-        context.state_.station_mark_.set(cista::to_idx(from_loc_view_idx), true);
-      }
+      context.state_.station_mark_.set(cista::to_idx(from_loc_view_idx), true);
+    }
 #endif
+  }
+
+  raptor.rounds();
+
+  std::vector<bmc_journey> bmc_journey_bag;
+  cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
+    location_idx_t const destination_loc_idx = location_idx_t{i};
+    location_idx_view_t const destination_loc_view_idx =
+        context.tt_view_.get_view_idx(destination_loc_idx);
+
+    if (destination_loc_view_idx == location_idx_view_t::invalid()) {
+      return;
     }
 
+    raptor.emplace_relative_journeys_for(destination_loc_view_idx,
+                                         bmc_journey_bag);
 
-    raptor.rounds();
+    for (auto const& bmc_j : bmc_journey_bag) {
+      backtrack_and_update_ranks(bmc_j.label_iter_, context,
+                                 bmc_j.transfers_ + 1, location_idx_t{i}, level,
+                                 cell, cut_cmpnt_from, task.atomic_ranks_);
+    }
 
-    std::vector<bmc_journey> bmc_journey_bag;
-    cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
-      const location_idx_t destination_loc_idx = location_idx_t{i};
-      location_idx_view_t const destination_loc_view_idx =
-          context.tt_view_.get_view_idx(destination_loc_idx);
+    bmc_journey_bag.clear();
+  });
 
-      if (destination_loc_view_idx == location_idx_view_t::invalid()) {
-        return;
-      }
-
-      raptor.emplace_relative_journeys_for(destination_loc_view_idx, bmc_journey_bag);
-
-      for (const auto& bmc_j : bmc_journey_bag) {
-        backtrack_and_update_ranks(bmc_j.label_iter_,
-                                   context,
-                                   bmc_j.transfers_ + 1,
-                                   location_idx_t{i},
-                                   level,
-                                   cell,
-                                   cut_cmpnt_from,
-                                   task.atomic_ranks_);
-      }
-
-
-      bmc_journey_bag.clear();
-    });
-
-    context.state_.reset();
-  }
+  context.state_.reset();
   context.last_cell_idx_ = cell;
   ++cell_progress[to_idx(cell)];
 }
@@ -420,90 +416,6 @@ void customizer::backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator roo
 #endif
     current_k--;
   }
-}
-
-void customizer::cut_routing_task(const thread_task& task,
-                                  mc_raptor_state& state,
-                                  std::vector<std::atomic<size_t>>& cell_progress) {
-  const auto cut_cmpnt_from = task.component_idx_;
-  const auto cell = task.cell_idx_;
-  const auto level = task.level_;
-
-  const auto [bin_from, bin_to] = *task.iter_;
-
-
-  const auto& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
-  for (auto bin_i = bin_from; bin_i < bin_to; ++bin_i) {
-    const auto bin_begin_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i];
-    const auto bin_end_idx = start_times_registry_.bin_start_idxs_[to_idx(cell)][bin_i + 1];
-    mc_raptor raptor{tt_,
-                     state,
-                     tt_.internal_interval(),
-                     cell_cut_stops_[to_idx(cell)],
-                     route_masks_[to_idx(cell)],
-                     transfer_masks_[to_idx(cell)]};
-
-    for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx; ++dep_event_i) {
-      const auto& rel_dep_event = start_times_registry_.cmpnt_dep_events_buffer_[to_idx(cell)][dep_event_i];
-      rel_dep_event.active_days_.for_each_set_bit([&](uint16_t const day_idx) {
-        const auto from_loc = cmpnt_locs[cista::to_idx(rel_dep_event.dep_loc_)];
-
-        const routing_time dep_time = {day_idx_t{day_idx}, rel_dep_event.dep_min_after_midnight_};
-        state.round_bags_[0U][cista::to_idx(from_loc)].add(mc_raptor_label(
-          dep_time, 0_minutes, dep_time)
-        );
-        state.best_[cista::to_idx(from_loc)].add(mc_raptor_label(
-          dep_time, 0_minutes, dep_time)
-        );
-        state.station_mark_.set(cista::to_idx(from_loc), true);
-      });
-    }
-
-    raptor.route();
-    for (const auto& journeys : state.results_) {
-      for (const auto& j : journeys) {
-        update_ranks_for(j, level, cell);
-      }
-    }
-    state.reset();
-  }
-  /*
-  for (auto const from_loc : cmpnt_locs) {
-    mc_raptor raptor{tt_,
-                 state,
-                 tt_.internal_interval(),
-                 cell_cut_stops_[to_idx(cell)],
-                 route_masks_[to_idx(cell)],
-                 transfer_masks_[to_idx(cell)]};
-    std::vector<start> starts;
-    get_starts(direction::kForward, tt_, nullptr, tt_.internal_interval(), {{from_loc, 0_minutes, 0U}}, {}, {}, kMaxTravelTime, location_match_mode::kExact, true, starts, true, kDefaultProfile, {}, route_masks_[to_idx(cell)]);
-    utl::equal_ranges_linear(
-    starts,
-    [](start const& a, start const& b) {
-      return a.time_at_start_ == b.time_at_start_;
-    },
-    [&](auto&& from_it, auto&& to_it) {
-      for (auto const& s : it_range{from_it, to_it}) {
-        state.round_bags_[0U][to_idx(s.stop_)].add(mc_raptor_label(
-            {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
-        state.best_[to_idx(s.stop_)].add(mc_raptor_label(
-            {tt_, s.time_at_stop_}, 0_minutes, {tt_, from_it->time_at_start_}));
-        state.station_mark_.set(to_idx(s.stop_), true);
-      }
-    }
-  );
-
-    raptor.route();
-    std::scoped_lock lock(cell_mutexes_[to_idx(cell)]);
-    for (const auto& journeys : state.results_) {
-      for (const auto& j : journeys) {
-        update_ranks_for(j, level, cell);
-      }
-    }
-    state.reset();
-  }
-  */
-  ++cell_progress[to_idx(cell)];
 }
 
 void customizer::append_cmpnt_cell_idxs(route_partition const& partition,

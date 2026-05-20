@@ -24,18 +24,18 @@ struct customizer {
     thread_task(cell_idx_t const cell_idx,
                 component_idx_t const component_idx,
                 std::uint8_t const level,
-                std::vector<bin_range_t>::const_iterator const iter,
+                size_t const bin_idx,
                 std::vector<std::atomic<std::uint8_t>>& atomic_ranks) :
     cell_idx_(cell_idx),
     component_idx_(component_idx),
     level_{level},
-    iter_(iter),
+    bin_idx_(bin_idx),
     atomic_ranks_(atomic_ranks) {}
 
     cell_idx_t cell_idx_;
     component_idx_t component_idx_;
     std::uint8_t level_;
-    std::vector<bin_range_t>::const_iterator iter_;
+    size_t bin_idx_;
     std::vector<std::atomic<std::uint8_t>>& atomic_ranks_;
   };
 
