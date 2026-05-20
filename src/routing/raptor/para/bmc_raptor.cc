@@ -346,7 +346,7 @@ void bmc_raptor::update_footpaths(unsigned const k) {
           continue;
         }
 
-        if (to_idx(target_view_idx) < i) {
+        if (to_idx(target_view_idx) < i || tt.is_location_transitive_[to_idx(target)]) {
           bool added = false;
           if (is_target_destination) {
             added = add_to_dest_round_bag(
@@ -443,21 +443,29 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
       };
 
       auto candidate_tdb = active_label.tdb_;
-
-      if (is_destination) {
-        filter_by_dest_bag<true>(
-            state_.best_bags_[to_idx(view_location_idx)],
-            candidate_lbl, candidate_tdb);
+      if (tt.is_location_transitive_.test(to_idx(source_location_idx))) {
+        if (is_destination) {
+          filter_by_dest_bag<false>(
+              state_.best_bags_[to_idx(view_location_idx)],
+              candidate_lbl, candidate_tdb);
+        } else {
+          filter_by_non_dest_bag<false>(
+              state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
+              candidate_tdb);
+        }
       } else {
-        filter_by_non_dest_bag<true>(
-            state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
-            candidate_tdb);
+        if (is_destination) {
+          filter_by_dest_bag<true>(
+              state_.best_bags_[to_idx(view_location_idx)],
+              candidate_lbl, candidate_tdb);
+        } else {
+          filter_by_non_dest_bag<true>(
+              state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
+              candidate_tdb);
+        }
       }
 
       if (candidate_tdb.none()) {
-        if (to_idx(route_idx) == 2548 && to_idx(source_location_idx) == 4969) {
-          std::cout << new_arr << std::endl;
-        }
         continue;
       }
 
