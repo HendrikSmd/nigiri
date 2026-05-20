@@ -181,6 +181,7 @@ void finalize(timetable& tt, finalize_options const opt) {
   }
   build_footpaths(tt, opt);
   write_final_components(tt);
+  write_transitivity_marks(tt);
   build_lb_graph<direction::kForward>(tt, kDefaultProfile);
   build_lb_graph<direction::kBackward>(tt, kDefaultProfile);
   build_location_tree(tt);
@@ -194,6 +195,9 @@ void finalize(timetable& tt, finalize_options const opt) {
 
   log(log_lvl::info, "nigiri.loader.finalize",
     "{} components", tt.component_locations_.size());
+
+  log(log_lvl::info, "nigiri.loader.finalize", "{} non transitive locations",
+      tt.n_locations() - tt.is_location_transitive_.count());
 }
 
 void finalize(timetable& tt,
