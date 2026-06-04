@@ -96,7 +96,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 7> sub_commands = {
+  static constexpr std::array<sub_command, 8> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
@@ -104,7 +104,8 @@ int main(int argc, char** argv) {
       {"start-customization", "start the customization process"},
       {"inspect-rank-store", "outputs information on the given rank store"},
       {"clique-cover", "computing a clique cover for the foot-graph of the given timetable"},
-      {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"}
+      {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"},
+      {"check-transport-order", "checks if the transports are ordered correctly"}
     }
   };
 
@@ -435,36 +436,43 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in_tt);
     tt.resolve();
 
-    size_t count = 0U;
     size_t non_transitive = 0U;
     for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
-      const auto& first_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
-      for (const auto& first_fp : first_fps) {
-        const auto middle_loc = first_fp.target();
-        const auto& second_fps = tt.locations_.footpaths_out_[kDefaultProfile][middle_loc];
-        for (const auto& second_fp : second_fps) {
-          const auto target_loc = second_fp.target();
+      const auto& in_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+      bool transitive = true;
+      for (const auto& in_fp : in_fps) {
+        const auto prev_loc = in_fp.target();
+        const auto& out_fps = tt.locations_.footpaths_out_[kDefaultProfile][loc];
+        for (const auto& out_fp : out_fps) {
+          const auto next_loc = out_fp.target();
 
-          if (loc == target_loc) {
+          if (prev_loc == next_loc) {
             continue;
           }
 
-          auto const closure = std::find_if(first_fps.begin(), first_fps.end(),
-                                            [target_loc](auto const& fp) {
-                                              return fp.target() == target_loc;
+          const auto& prev_out_fps = tt.locations_.footpaths_out_[kDefaultProfile][prev_loc];
+          auto const closure = std::find_if(prev_out_fps.begin(), prev_out_fps.end(),
+                                            [next_loc](auto const& fp) {
+                                              return fp.target() == next_loc;
                                             });
-          if (closure == first_fps.end()) {
-            non_transitive++;
+          if (closure == prev_out_fps.end()) {
+            transitive = false;
+            break;
           }
-          count++;
         }
+        if (!transitive) {
+          break;
+        }
+      }
+      if (!transitive) {
+        non_transitive++;
       }
     }
 
     if (non_transitive == 0U) {
       std::cout << "Footpaths are transitively closed!" << std::endl;
     } else {
-      std::cout << "Found " << non_transitive << "/" << count << " many occurrences of non transitivity!" << std::endl;
+      std::cout << "Found " << non_transitive << "/" << tt.n_locations() << " many occurrences of non transitivity!" << std::endl;
     }
   } else if (command == "route") {
     auto in_tt = fs::path{};
@@ -518,6 +526,108 @@ int main(int argc, char** argv) {
     for (const auto j : res_bmc) {
       std::cout << "dep: " << j.departure_.to_unixtime(tt) << ", arr: " << j.arrival_.to_unixtime(tt) << " transfers: " << j.transfers_ << std::endl;
     }
+  } else if (command == "check-transport-order") {
+    auto in_tt = fs::path{};
+
+    bpo::options_description start_custom_desc("check-fp-transitivity options");
+    start_custom_desc.add_options()("in_tt", bpo::value(&in_tt),
+                                    "path to the timetable with the footpaths");
+
+    if (vm.contains("help")) {
+      std::cout << start_custom_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts =
+        bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(start_custom_desc).run(),
+               cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    const auto mod_comp = [](const delta d1, const delta d2) {
+      return d1.as_duration() % 1440 < d2.as_duration() % 1440;
+    };
+
+
+    std::vector<route_idx_t> incorrect_routes;
+
+    const auto check_order = [&]() {
+      for (auto r = route_idx_t{0U}; r < tt.n_routes(); ++r) {
+        const auto iv = tt.route_transport_ranges_[r];
+        const auto stop_seq = tt.route_location_seq_[r];
+
+        for (auto i = 0U; i < stop_seq.size(); ++i) {
+          std::vector<delta> dep_events;
+          std::vector<delta> arr_events;
+          for (const auto t : iv) {
+            if (i + 1 < stop_seq.size()) {
+              dep_events.push_back(tt.event_mam(r, t, i, event_type::kDep));
+            }
+            if (i > 0) {
+              arr_events.push_back(tt.event_mam(r, t, i, event_type::kArr));
+            }
+          }
+
+          if (!std::is_sorted(dep_events.begin(), dep_events.end()) ||
+              !std::is_sorted(arr_events.begin(), arr_events.end())) {
+            incorrect_routes.push_back(r);
+            break;
+          }
+
+          if (!std::is_sorted(dep_events.begin(), dep_events.end(), mod_comp) ||
+              !std::is_sorted(arr_events.begin(), arr_events.end(), mod_comp)) {
+            incorrect_routes.push_back(r);
+            break;
+          }
+
+          if (!dep_events.empty() && dep_events.front().as_duration() + duration_t{1440} < dep_events.back().as_duration()) {
+            incorrect_routes.push_back(r);
+            break;
+          }
+
+          if (!arr_events.empty() && arr_events.front().as_duration() + duration_t{1440} < arr_events.back().as_duration()) {
+            incorrect_routes.push_back(r);
+            break;
+          }
+
+        }
+      }
+    };
+
+    check_order();
+    std::cout << incorrect_routes.size() << "/" << tt.n_routes() << " incorrect routes" << std::endl;
+    std::cout << tt.transport_route_.size() << " many transports" << std::endl;
+
+    for (const auto r : incorrect_routes) {
+      const auto iv = tt.route_transport_ranges_[r];
+      const auto stop_seq = tt.route_location_seq_[r];
+      for (const auto t : iv) {
+        for (auto i = 0U; i < stop_seq.size(); ++i) {
+          std::cout << "[";
+          if (i > 0) {
+            std::cout << " arr=" << tt.event_mam(r, t, i, event_type::kArr);
+          }
+          if (i > 0 && i < stop_seq.size()) {
+            std::cout << ", ";
+          }
+          if (i + 1 < stop_seq.size()) {
+            std::cout << "dep=" << tt.event_mam(r, t, i, event_type::kDep);
+          }
+          std::cout << "]";
+          if (i + 1 < stop_seq.size()) {
+            std::cout << " -> ";
+          }
+        }
+        std::cout << std::endl;
+      }
+      std::cout << std::endl;
+    }
+
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }

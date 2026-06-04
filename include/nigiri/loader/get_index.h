@@ -20,10 +20,21 @@ std::optional<std::size_t> get_index(ServiceVector const& route_services,
     auto const is_earlier_eq =
         index > 0 && s.utc_times_[i] % 1440 <
                          route_services[index - 1].utc_times_.at(i) % 1440;
+
+    auto const is_earlier_eq_raw =
+        index > 0 && s.utc_times_[i] <
+                         route_services[index - 1].utc_times_.at(i);
     auto const is_later_eq =
         index < route_services.size() &&
         s.utc_times_[i] % 1440 > route_services[index].utc_times_.at(i) % 1440;
-    if (is_earlier_eq || is_later_eq) {
+
+    auto const is_later_eq_raw =
+        index < route_services.size() &&
+        s.utc_times_[i] > route_services[index].utc_times_.at(i);
+
+    auto const is_overlapping =
+      index == route_services.size() && route_services[0].utc_times_.at(i) + duration_t{1440} <= s.utc_times_.at(i);
+    if (is_earlier_eq || is_later_eq || is_later_eq_raw || is_earlier_eq_raw || is_overlapping) {
       return std::nullopt;
     }
   }
