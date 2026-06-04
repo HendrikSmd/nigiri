@@ -38,8 +38,9 @@ struct raptor_stats {
          fp_update_prevented_by_lower_bound_},
         {"route_update_prevented_by_lower_bound",
          route_update_prevented_by_lower_bound_},
-        {"n_route_scan_pruned_by_para",
-           n_route_scan_pruned_by_para},
+        {"n_route_scan_pruned_by_para", n_route_scan_pruned_by_para_},
+        {"n_departure_pruned_by_para", n_departure_pruned_by_para_},
+        {"n_arrival_pruned_by_para", n_arrival_pruned_by_para_},
     };
   }
 
@@ -57,8 +58,12 @@ struct raptor_stats {
         o.fp_update_prevented_by_lower_bound_;
     copy.route_update_prevented_by_lower_bound_ +=
         o.route_update_prevented_by_lower_bound_;
-    copy.n_route_scan_pruned_by_para +=
-        o.n_route_scan_pruned_by_para;
+    copy.n_route_scan_pruned_by_para_ +=
+        o.n_route_scan_pruned_by_para_;
+    copy.n_arrival_pruned_by_para_ +=
+    o.n_arrival_pruned_by_para_;
+    copy.n_departure_pruned_by_para_ +=
+    o.n_departure_pruned_by_para_;
     return copy;
   }
 
@@ -70,7 +75,9 @@ struct raptor_stats {
   std::uint64_t n_earliest_arrival_updated_by_footpath_{0ULL};
   std::uint64_t fp_update_prevented_by_lower_bound_{0ULL};
   std::uint64_t route_update_prevented_by_lower_bound_{0ULL};
-  std::uint64_t n_route_scan_pruned_by_para{0ULL};
+  std::uint64_t n_route_scan_pruned_by_para_{0ULL};
+  std::uint64_t n_arrival_pruned_by_para_{0ULL};
+  std::uint64_t n_departure_pruned_by_para_{0ULL};
 };
 
 enum class search_mode { kOneToOne, kOneToAll };
@@ -403,10 +410,10 @@ private:
     if constexpr (algo_version == version::kPara) {
       start_lcls_.resize(n_routes_);
       dest_lcls_.resize(n_routes_);
+      auto const& r_store = *rank_store_;
+      auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
+      auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
       for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
-        auto const& r_store = *rank_store_;
-        auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
-        auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
         start_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_start);
         dest_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_dest);
       }
@@ -467,7 +474,7 @@ private:
         if (auto const route_rank = r_store.ranks_[r_from];
             route_rank < start_lcls_[to_idx(r)] &&
             route_rank < dest_lcls_[to_idx(r)]) {
-          stats_.n_route_scan_pruned_by_para++;
+          stats_.n_route_scan_pruned_by_para_++;
           return;
         }
       }
@@ -1039,7 +1046,7 @@ private:
                   rank_store_->ranks_[r_ranks_from + (i * 2)];
               transfer_rank < start_lcls_[to_idx(r)] &&
               transfer_rank < dest_lcls_[to_idx(r)]) {
-            stats_.n_route_scan_pruned_by_para++;
+            stats_.n_arrival_pruned_by_para_++;
             break;
               }
         }
@@ -1178,7 +1185,7 @@ private:
                 rank_store_->ranks_[r_ranks_from + (1 + (i * 2))];
             transfer_rank < start_lcls_[to_idx(r)] &&
             transfer_rank < dest_lcls_[to_idx(r)]) {
-          stats_.n_route_scan_pruned_by_para++;
+          stats_.n_departure_pruned_by_para_++;
           continue;
             }
       }

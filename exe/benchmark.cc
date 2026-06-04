@@ -91,9 +91,17 @@ struct benchmark_result {
                br.routing_result_.interval_.size())
                .count()
         << "h" << ", #jrny: " << std::setfill(' ') << std::setw(2)
-        << br.journeys_.size() << ", #para-routes-skipped: " << std::setfill(' ')
-        << std::setw(5) << br.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para")
-        << ")";
+        << br.journeys_.size() << ", #routes-scanned " << std::setfill(' ')
+        << std::setw(9) << br.routing_result_.algo_stats_.at("n_routes_visited")
+        << ", #get-earliest-trip-calls: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_earliest_trip_calls")
+        << ", #routes-skipped-by-para: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para")
+        << ", #departures-skipped-by-para: " << std::setfill(' ')
+        << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_departure_pruned_by_para")
+        << ", #arrivals-skipped-by-para: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") << ")";
     return out;
   }
 
@@ -345,10 +353,34 @@ void print_results(
   print_result(results, "#journeys");
 
   utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at("n_earliest_trip_calls") <
+           b.routing_result_.algo_stats_.at("n_earliest_trip_calls");
+  });
+  print_result(results, "#earliest trip calls");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at("n_routes_visited") <
+           b.routing_result_.algo_stats_.at("n_routes_visited");
+  });
+  print_result(results, "#routes visited");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
   return a.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para") <
-         b.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para");
+           b.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para");
   });
   print_result(results, "#route scans pruned by para");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at("n_departure_pruned_by_para") <
+           b.routing_result_.algo_stats_.at("n_departure_pruned_by_para");
+  });
+  print_result(results, "#departures pruned by para");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") <
+           b.routing_result_.algo_stats_.at("n_arrival_pruned_by_para");
+  });
+  print_result(results, "#arrivals pruned by para");
 }
 
 void print_memory_usage() {
@@ -504,7 +536,7 @@ int main(int argc, char* argv[]) {
       }
     }
   } else if (start_mode_str == "station") {
-    gs.start_match_mode_ = location_match_mode::kEquivalent;
+    gs.start_match_mode_ = location_match_mode::kExact;
   } else {
     std::cout << "Error: Invalid start mode\n";
     return 1;
@@ -523,7 +555,7 @@ int main(int argc, char* argv[]) {
       }
     }
   } else if (dest_mode_str == "station") {
-    gs.dest_match_mode_ = location_match_mode::kEquivalent;
+    gs.dest_match_mode_ = location_match_mode::kExact;
   } else {
     std::cout << "Error: Invalid destination mode\n";
     return 1;
