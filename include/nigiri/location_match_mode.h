@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 namespace nigiri::routing {
 
 enum class location_match_mode {
@@ -8,5 +10,7 @@ enum class location_match_mode {
   kEquivalent,  // use equivalent locations (includes children)
   kIntermodal  // use coordinate
 };
+
+std::string_view location_match_mode_str(location_match_mode mode);
 
 }  // namespace nigiri::routing

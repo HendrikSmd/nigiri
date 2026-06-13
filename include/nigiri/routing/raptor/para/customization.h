@@ -15,28 +15,32 @@ namespace nigiri::routing::para {
 
 struct customizer {
 
+  using atomic_ranks_t = std::vector<std::atomic<std::uint8_t>>;
+
   enum class search_algorithm { mc_raptor, bmc_raptor };
 
   constexpr static search_algorithm search_algo = search_algorithm::bmc_raptor;
-  constexpr static bool use_initial_footpaths = false;
 
   struct thread_task {
     thread_task(cell_idx_t const cell_idx,
                 component_idx_t const component_idx,
                 std::uint8_t const level,
                 size_t const bin_idx,
-                std::vector<std::atomic<std::uint8_t>>& atomic_ranks) :
+                atomic_ranks_t& atomic_route_ranks,
+                atomic_ranks_t& atomic_route_event_ranks) :
     cell_idx_(cell_idx),
     component_idx_(component_idx),
     level_{level},
     bin_idx_(bin_idx),
-    atomic_ranks_(atomic_ranks) {}
+    atomic_route_ranks_(atomic_route_ranks),
+    atomic_route_event_ranks_(atomic_route_event_ranks) {}
 
     cell_idx_t cell_idx_;
     component_idx_t component_idx_;
     std::uint8_t level_;
     size_t bin_idx_;
-    std::vector<std::atomic<std::uint8_t>>& atomic_ranks_;
+    atomic_ranks_t& atomic_route_ranks_;
+    atomic_ranks_t& atomic_route_event_ranks_;
   };
 
   struct local_thread_context {
@@ -47,67 +51,90 @@ struct customizer {
 
     cell_idx_t last_cell_idx_;
     timetable_view tt_view_;
-    bmc_raptor_state state_{};
   };
 
   customizer(timetable const& tt);
 
-  route_rank_store const& construct_route_rank_store(route_partition partition);
+  void compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks);
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
-  void initialize_cut_stops();
-  void initialize_ranks();
+  void initialize_cut_stops(route_partition const& p);
   void prepare_next_level();
-  void initialize_used_transfers();
   void unite_route_masks();
   void unite_cut_stops();
   void unite_cut_cmpnts();
-  void unite_used_transfers();
-  void append_cmpnt_cell_idxs(route_partition const& partition,
-                              std::vector<std::vector<cell_idx_t>>& cmpnt_to_cell_idxs);
-  void update_cmpnt_cell_idxs_next_level();
+  void compute_component_to_cells(route_partition const& partition);
+  void update_component_cell_idxs_for_next_level();
 
-  void cut_routing_task(thread_task const& task, local_thread_context& state,
-                        std::vector<std::atomic<size_t>>& cell_progress);
-  void cut_routing_task(thread_task const& task, mc_raptor_state& state,
-                        std::vector<std::atomic<size_t>>& cell_progress);
-  void update_ranks_for(journey const& j,
-                        std::uint8_t level,
-                        cell_idx_t cell);
+  void bmc_cut_routing_task(thread_task const& task,
+                            local_thread_context& state,
+                            std::vector<std::atomic<size_t>>& cell_progress);
+  void mc_cut_routing_task(thread_task const& task,
+                            local_thread_context& state,
+                            std::vector<std::atomic<size_t>>& cell_progress);
 
-  void backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
-                                  local_thread_context const& context,
-                                  unsigned k,
-                                  location_idx_t target,
-                                  std::uint8_t level,
-                                  cell_idx_t cell,
-                                  component_idx_t component_idx,
-                                  std::vector<std::atomic<std::uint8_t>>& atomic_ranks);
+  void bmc_backtrack_and_update_ranks(
+      bmc_raptor_bag_t::const_iterator root_label,
+      bmc_raptor_state const& state, local_thread_context const& context,
+      unsigned k, location_idx_t target, std::uint8_t level, cell_idx_t cell,
+      component_idx_t component_idx, atomic_ranks_t& atomic_route_ranks,
+      atomic_ranks_t& atomic_route_event_ranks);
+
+  void mc_backtrack_and_update_ranks(
+    pareto_set<mc_raptor_label>::const_iterator root_label,
+    mc_raptor_state const& state, local_thread_context const& context,
+    unsigned k, location_idx_t target, std::uint8_t level, cell_idx_t cell,
+    component_idx_t component_idx, atomic_ranks_t& atomic_route_ranks,
+    atomic_ranks_t& atomic_route_event_ranks);
+
   void log_progress(std::vector<std::atomic<size_t>> const& cell_progress) const;
 
-  void mark_updated_routes_and_used_transfers(
-    std::vector<std::atomic<std::uint8_t>> const& atomic_ranks,
-    route_partition const& partition,
-    std::uint8_t level);
+  void mark_routes_and_events_from_ranks(route_partition const& partition,
+                                         std::uint8_t level,
+                                         atomic_ranks_t const& atomic_route_ranks,
+                                         atomic_ranks_t const& atomic_route_event_ranks);
 
-  void materialize_atomic_ranks(std::vector<std::atomic<std::uint8_t>> const& atomic_ranks);
+  void materialize_atomic_ranks(atomic_ranks_t const& atomic_route_event_ranks,
+                                vecvec<route_idx_t, rank_t>& out_ranks);
+
+  void compute_route_event_ranks_index();
 
   const timetable& tt_;
 
-  // operational data
-  std::vector<bitvec> updated_routes_;
+  /*
+   * route_masks_ contains for every cell of the current
+   * level a bitvec of size tt.n_routes(). Bit i is set
+   * in bitvec of cell j, if the route i is contained in
+   * cell j on the current level and it was marked in the
+   * last level.
+   */
   std::vector<bitvec> route_masks_;
-  std::vector<bitvec> transfer_masks_;
-  std::vector<bitvec> used_transfers_;
-  std::vector<bitvec> cell_cut_cmpnts_;
+
+  /*
+   * route_event_mask_ has a bit for every departure/arrival
+   * event of any route at every of its stops. The structure
+   * is as follows
+   * Route 0:
+   *   stop-0-dep, stop-1-arr, stop-1-dep, ..., stop-N_0-arr
+   * Route 1:
+   *   stop-0-dep, stop-1-arr, stop-1-dep, ..., stop-N_1-arr
+   * ...
+   * For the current level an event bit is set iff the event
+   * was marked in the last round. This bitvec is initially
+   * an all-ones mask. Gradually bits are cleared.
+   */
+  bitvec route_event_mask_;
+
+  bitvec marked_routes_;
+  vector_map<route_idx_t, std::uint32_t> route_event_starts_index_;
+  bitvec marked_route_events_;
+
+  std::vector<bitvec> cell_cut_components_;
   std::vector<bitvec> cell_cut_stops_;
-  std::vector<std::vector<cell_idx_t>> cmpnt_to_current_lvl_cell_idxs_;
+  std::vector<std::vector<cell_idx_t>> current_lvl_cells_of_components_;
 
   // Start Times
   start_times_registry start_times_registry_;
-
-  // Results
-  route_rank_store route_rank_store_;
 };
 
 } // namespace nigiri::routing::para

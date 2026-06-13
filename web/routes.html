@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nigiri Route Visualizer</title>
+  
+  <!-- MapLibre GL JS -->
+  <script src="https://unpkg.com/maplibre-gl@4.3.2/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.3.2/dist/maplibre-gl.css" rel="stylesheet" />
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-panel: rgba(15, 23, 42, 0.85);
+      --bg-panel-hover: rgba(15, 23, 42, 0.95);
+      --border-panel: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-color: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0f172a;
+      color: var(--text-main);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* UI Overlay Panel */
+    .control-panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      width: 360px;
+      max-height: calc(100vh - 40px);
+      z-index: 10;
+      background: var(--bg-panel);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-panel);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      padding: 24px;
+      display: flex;
+      flex-direction: flex-start;
+      flex-flow: column;
+      gap: 20px;
+      overflow-y: auto;
+      transition: background 0.3s ease;
+    }
+
+    .control-panel:hover {
+      background: var(--bg-panel-hover);
+    }
+
+    .header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      margin-bottom: 4px;
+      background: linear-gradient(to right, #60a5fa, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* File Import Section */
+    .import-section {
+      border: 2px dashed rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .import-section:hover {
+      border-color: var(--accent-color);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .import-section input[type="file"] {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .import-icon {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .import-text {
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .import-subtext {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Stats Section */
+    .stats-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .stat-card {
+      text-align: center;
+    }
+
+    .stat-val {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #3b82f6;
+    }
+
+    .stat-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    /* Filters Section */
+    .filter-section {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .filter-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .filter-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .bulk-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .bulk-btn {
+      background: transparent;
+      border: none;
+      color: #60a5fa;
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .bulk-btn:hover {
+      background: rgba(96, 165, 250, 0.1);
+    }
+
+    .rank-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    /* Custom scrollbar for panel and list */
+    .control-panel::-webkit-scrollbar,
+    .rank-list::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .control-panel::-webkit-scrollbar-track,
+    .rank-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .control-panel::-webkit-scrollbar-thumb,
+    .rank-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    /* Modern Rank Toggle Option */
+    .rank-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .rank-toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .rank-toggle-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      transition: all 0.2s ease;
+    }
+
+    .rank-toggle:hover .rank-toggle-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .rank-toggle input:checked + .rank-toggle-btn {
+      background: rgba(var(--rank-color-rgb, 59, 130, 246), 0.12);
+      border-color: var(--rank-color, #3b82f6);
+      box-shadow: 0 0 8px rgba(var(--rank-color-rgb, 59, 130, 246), 0.2);
+    }
+
+    .color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 0 6px var(--rank-color);
+      transition: transform 0.2s ease;
+    }
+
+    .rank-toggle input:checked + .rank-toggle-btn .color-dot {
+      transform: scale(1.3);
+    }
+
+    .rank-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    /* Notifications popup */
+    #notification {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      color: #f8fafc;
+      font-size: 0.85rem;
+      z-index: 100;
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: all 0.3s ease;
+    }
+
+    #notification.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #notification.success {
+      border-left: 4px solid #10b981;
+    }
+
+    #notification.info {
+      border-left: 4px solid #3b82f6;
+    }
+
+    /* Custom Tooltip */
+    .maplibregl-popup-content {
+      background: #0f172a !important;
+      color: #f8fafc !important;
+      border: 1px solid rgba(255, 255, 255, 0.1) !important;
+      border-radius: 8px !important;
+      padding: 10px 14px !important;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+    }
+
+    .maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #0f172a !important; }
+    .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #0f172a !important; }
+    .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: #0f172a !important; }
+    .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: #0f172a !important; }
+
+    .tooltip-content {
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <div class="control-panel">
+    <div class="header">
+      <h1>Nigiri Route Visualizer</h1>
+      <p>Analyze public transit routes and ranks</p>
+    </div>
+
+    <!-- Upload/Drag GeoJSON -->
+    <div class="import-section">
+      <span class="import-icon">📂</span>
+      <span class="import-text">Select GeoJSON</span>
+      <span class="import-subtext">Click or drag your generated routes file</span>
+      <input type="file" id="file-input" accept=".geojson,application/json">
+    </div>
+
+    <!-- Statistics -->
+    <div class="stats-container">
+      <div class="stat-card">
+        <div class="stat-val" id="stat-routes">0</div>
+        <div class="stat-label">Routes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-ranks">0</div>
+        <div class="stat-label">Ranks</div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-section">
+      <div class="filter-header">
+        <span class="filter-title">Ranks</span>
+        <div class="bulk-actions">
+          <button class="bulk-btn" onclick="setAllRanks(true)">All</button>
+          <button class="bulk-btn" onclick="setAllRanks(false)">None</button>
+        </div>
+      </div>
+      <div class="rank-list" id="rank-filters">
+        <!-- Will be populated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <div id="notification">Notification message</div>
+
+  <script>
+    // Initialize MapLibre Map with CartoDB Dark Matter / Positron
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [10.0, 50.0],
+      zoom: 5
+    });
+
+    let currentGeoJSON = null;
+    let hoveredRouteId = null;
+    const tooltip = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 15
+    });
+
+    // Curated color palette for ranks
+    const colorPalette = [
+      '#3b82f6', // blue
+      '#10b981', // green
+      '#f59e0b', // orange
+      '#ef4444', // red
+      '#8b5cf6', // purple
+      '#ec4899', // pink
+      '#06b6d4', // cyan
+      '#14b8a6', // teal
+      '#f43f5e', // rose
+      '#a855f7'  // purple-light
+    ];
+
+    // Convert hex color to RGB string "R, G, B"
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return `${r}, ${g}, ${b}`;
+    }
+
+    function getRankColors(ranks) {
+      const colors = {};
+      ranks.forEach((rank, idx) => {
+        colors[rank] = colorPalette[idx % colorPalette.length];
+      });
+      return colors;
+    }
+
+    // Initialize Map Sources and Layers
+    map.on('load', () => {
+      // Add empty source first
+      map.addSource('routes', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: []
+        }
+      });
+
+      // Background casing layer to make paths stand out
+      map.addLayer({
+        id: 'routes-casing',
+        type: 'line',
+        source: 'routes',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#020617',
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            8,
+            4
+          ],
+          'line-opacity': 0.6
+        }
+      });
+
+      // Main route paths
+      map.addLayer({
+        id: 'routes-layer',
+        type: 'line',
+        source: 'routes',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#3b82f6', // default, updated dynamically
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            5,
+            2
+          ],
+          'line-opacity': 0.8
+        }
+      });
+
+      // Interactive hover effects
+      map.on('mousemove', 'routes-layer', (e) => {
+        if (e.features.length > 0) {
+          map.getCanvas().style.cursor = 'pointer';
+          
+          if (hoveredRouteId !== null) {
+            map.setFeatureState(
+              { source: 'routes', id: hoveredRouteId },
+              { hover: false }
+            );
+          }
+          
+          hoveredRouteId = e.features[0].id;
+          map.setFeatureState(
+            { source: 'routes', id: hoveredRouteId },
+            { hover: true }
+          );
+
+          const properties = e.features[0].properties;
+          const routeIdx = properties.route_idx;
+          const rank = properties.rank;
+
+          tooltip.setLngLat(e.lngLat)
+            .setHTML(`
+              <div class="tooltip-content">
+                <strong>Route Index:</strong> ${routeIdx}<br>
+                <strong>Rank:</strong> ${rank}
+              </div>
+            `)
+            .addTo(map);
+        }
+      });
+
+      map.on('mouseleave', 'routes-layer', () => {
+        map.getCanvas().style.cursor = '';
+        if (hoveredRouteId !== null) {
+          map.setFeatureState(
+            { source: 'routes', id: hoveredRouteId },
+            { hover: false }
+          );
+        }
+        hoveredRouteId = null;
+        tooltip.remove();
+      });
+
+      // Try auto-loading routes.geojson
+      autoLoadGeoJSON();
+    });
+
+    // Automatically load routes.geojson if served
+    function autoLoadGeoJSON() {
+      fetch('routes.geojson')
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Default file not found');
+          }
+          return response.json();
+        })
+        .then(data => {
+          loadGeoJSON(data);
+          showNotification('Loaded routes.geojson automatically', 'success');
+        })
+        .catch(err => {
+          console.log('No default routes.geojson found or CORS issue. Please upload manual file.');
+          showNotification('Please load a generated GeoJSON file.', 'info');
+        });
+    }
+
+    // Parse and load GeoJSON into map
+    function loadGeoJSON(geojson) {
+      if (!geojson || geojson.type !== 'FeatureCollection') {
+        showNotification('Invalid GeoJSON format', 'info');
+        return;
+      }
+
+      // Add integer ID to each feature to support feature state (hovering)
+      geojson.features.forEach((feature, index) => {
+        feature.id = index;
+      });
+
+      currentGeoJSON = geojson;
+
+      // Update statistics
+      document.getElementById('stat-routes').textContent = geojson.features.length;
+
+      // Extract unique ranks
+      const ranksSet = new Set();
+      geojson.features.forEach(f => {
+        if (f.properties && f.properties.rank !== undefined) {
+          ranksSet.add(f.properties.rank);
+        }
+      });
+
+      const ranks = Array.from(ranksSet).sort((a, b) => a - b);
+      document.getElementById('stat-ranks').textContent = ranks.length;
+
+      // Generate UI Controls and Map Colors
+      updateUIControls(ranks);
+      updateMapLayers(geojson, ranks);
+
+      // Fit map boundaries to lines
+      fitMapToData(geojson);
+    }
+
+    // Dynamic generation of rank checkboxes
+    function updateUIControls(ranks) {
+      const container = document.getElementById('rank-filters');
+      container.innerHTML = '';
+
+      const colors = getRankColors(ranks);
+
+      ranks.forEach(rank => {
+        const color = colors[rank] || '#6b7280';
+        const rgb = hexToRgb(color);
+
+        const label = document.createElement('label');
+        label.className = 'rank-toggle';
+        label.style.setProperty('--rank-color', color);
+        label.style.setProperty('--rank-color-rgb', rgb);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.value = rank;
+        checkbox.addEventListener('change', () => {
+          filterMap();
+        });
+
+        const span = document.createElement('span');
+        span.className = 'rank-toggle-btn';
+        span.innerHTML = `
+          <span class="color-dot" style="background-color: ${color}"></span>
+          <span class="rank-name">Rank ${rank}</span>
+        `;
+
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        container.appendChild(label);
+      });
+    }
+
+    // Update map line-color expression
+    function updateMapLayers(geojson, ranks) {
+      const colors = getRankColors(ranks);
+
+      // Match expression: ['match', ['get', 'rank'], rank0, color0, ..., fallbackColor]
+      const colorExpression = ['match', ['get', 'rank']];
+      ranks.forEach(rank => {
+        colorExpression.push(rank);
+        colorExpression.push(colors[rank]);
+      });
+      colorExpression.push('#6b7280'); // fallback default color
+
+      map.getSource('routes').setData(geojson);
+      map.setPaintProperty('routes-layer', 'line-color', colorExpression);
+
+      // Reset filter
+      filterMap();
+    }
+
+    // Filter map layers based on checked ranks
+    function filterMap() {
+      if (!currentGeoJSON) return;
+
+      const checkedCheckboxes = document.querySelectorAll('#rank-filters input:checked');
+      const checkedRanks = Array.from(checkedCheckboxes).map(cb => parseInt(cb.value));
+
+      // Filter layer by rank using in expression
+      if (checkedRanks.length === 0) {
+        map.setFilter('routes-layer', ['==', ['get', 'rank'], -1]); // show nothing
+        map.setFilter('routes-casing', ['==', ['get', 'rank'], -1]);
+      } else {
+        const filterExpr = ['in', ['get', 'rank'], ['literal', checkedRanks]];
+        map.setFilter('routes-layer', filterExpr);
+        map.setFilter('routes-casing', filterExpr);
+      }
+    }
+
+    // Bounding Box zoom fit
+    function fitMapToData(geojson) {
+      if (!geojson.features || geojson.features.length === 0) return;
+
+      const bounds = new maplibregl.LngLatBounds();
+      geojson.features.forEach(f => {
+        if (f.geometry && f.geometry.type === 'LineString') {
+          f.geometry.coordinates.forEach(coord => {
+            bounds.extend(coord);
+          });
+        }
+      });
+
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, {
+          padding: 60,
+          maxZoom: 15,
+          duration: 1200
+        });
+      }
+    }
+
+    // Check / Uncheck all ranks
+    function setAllRanks(checked) {
+      const checkboxes = document.querySelectorAll('#rank-filters input');
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+      });
+      filterMap();
+    }
+
+    // File Input selection
+    document.getElementById('file-input').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const geojson = JSON.parse(event.target.result);
+          loadGeoJSON(geojson);
+          showNotification(`Successfully loaded ${file.name}`, 'success');
+        } catch (err) {
+          showNotification('Error parsing JSON/GeoJSON', 'info');
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Helper for Toast Notifications
+    function showNotification(msg, type) {
+      const el = document.getElementById('notification');
+      el.textContent = msg;
+      el.className = `show ${type}`;
+      setTimeout(() => {
+        el.className = '';
+      }, 4000);
+    }
+  </script>
+</body>
+</html>

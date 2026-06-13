@@ -16,12 +16,9 @@
 #include "nigiri/timetable.h"
 #include "nigiri/types.h"
 
-#include "para/customization.h"
+#include "nigiri/routing/raptor/para/route_rank_store.h"
 
 namespace nigiri::routing {
-namespace para {
-struct route_rank_store;
-}
 
 struct raptor_stats {
   std::map<std::string, std::uint64_t> to_map() const {
@@ -82,13 +79,22 @@ struct raptor_stats {
 
 enum class search_mode { kOneToOne, kOneToAll };
 
-enum class version { kDefault, kPara };
+enum class version { kDefault, kParaPlainRanks, kParaSkipList };
+
+constexpr bool is_para_accelerated(version const v) {
+  return v != version::kDefault;
+}
 
 template <direction SearchDir,
           bool Rt,
           via_offset_t Vias,
           search_mode SearchMode,
-          version algo_version = version::kDefault>
+          version algo_version = version::kDefault,
+          typename rank_store_t = std::conditional_t<algo_version == version::kDefault,
+                                    para::empty_route_rank_store,
+                                    std::conditional_t<algo_version == version::kParaPlainRanks,
+                                      para::plain_route_rank_store const&, para::skip_list_route_rank_store const&>>
+          >
 struct raptor {
   using algo_state_t = raptor_state;
   using algo_stats_t = raptor_stats;
@@ -124,8 +130,8 @@ struct raptor {
     std::vector<std::uint16_t>& dist_to_dest,
     std::vector<std::uint16_t>& lb,
     day_idx_t const base,
-    std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
-    para::route_rank_store const& rank_store) requires (algo_version == version::kPara)
+    std::pair<component_idx_t, component_idx_t> start_dest_component,
+    rank_store_t rank_store) requires (is_para_accelerated(algo_version))
       : raptor(
           tt,
           nullptr,
@@ -142,8 +148,8 @@ struct raptor {
           false,
           false,
           {},
-          std::move(start_dest_cmpnt),
-          &rank_store) {}
+          start_dest_component,
+          rank_store) {}
 
   raptor(
     timetable const& tt,
@@ -160,7 +166,7 @@ struct raptor {
     bool const require_bike_transport,
     bool const require_car_transport,
     bool const is_wheelchair,
-    transfer_time_settings const& tts) requires (algo_version == version::kDefault)
+    transfer_time_settings const& tts) requires (!is_para_accelerated(algo_version))
       : raptor(
           tt,
           rtt,
@@ -178,7 +184,7 @@ struct raptor {
           is_wheelchair,
           tts,
           std::pair(component_idx_t::invalid(), component_idx_t::invalid()),
-          nullptr) {}
+          para::empty_route_rank_store{}) {}
 
   algo_stats_t get_stats() const { return stats_; }
 
@@ -368,7 +374,7 @@ private:
   bool const is_wheelchair,
   transfer_time_settings const& tts,
   std::pair<component_idx_t, component_idx_t> start_dest_cmpnt,
-  para::route_rank_store const* rank_store)
+  rank_store_t rank_store)
   : tt_{tt},
     rtt_{rtt},
     n_days_{tt_.internal_interval_days().size().count()},
@@ -407,15 +413,12 @@ private:
         end_reachable_.set(to_idx(l), true);
       }
     }
-    if constexpr (algo_version == version::kPara) {
-      start_lcls_.resize(n_routes_);
-      dest_lcls_.resize(n_routes_);
-      auto const& r_store = *rank_store_;
-      auto const g_cell_start = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
-      auto const g_cell_dest = r_store.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
+    if constexpr (is_para_accelerated(algo_version)) {
+      min_lcls_.resize(n_routes_);
+      auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
+      auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
       for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
-        start_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_start);
-        dest_lcls_[to_idx(r_idx)] = lcl(r_store.partition_.route_to_cell_idx_[r_idx], g_cell_dest);
+        min_lcls_[to_idx(r_idx)] = std::min(lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_start), lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_dest));
       }
     }
   }
@@ -468,12 +471,9 @@ private:
         }
       }
 
-      if constexpr (algo_version == version::kPara) {
-        auto const& r_store = *rank_store_;
-        const auto r_from = r_store.route_rank_start_idx_[r];
-        if (auto const route_rank = r_store.ranks_[r_from];
-            route_rank < start_lcls_[to_idx(r)] &&
-            route_rank < dest_lcls_[to_idx(r)]) {
+      if constexpr (is_para_accelerated(algo_version)) {
+        if (auto const route_rank = rank_store_.route_ranks_[r];
+            route_rank < min_lcls_[to_idx(r)]) {
           stats_.n_route_scan_pruned_by_para_++;
           return;
         }
@@ -481,12 +481,21 @@ private:
 
       ++stats_.n_routes_visited_;
       trace("┊ ├k={} updating route {}\n", k, r);
-      any_marked |=
-          section_bike_filter
-              ? (section_car_filter ? update_route<true, true>(k, r)
-                                    : update_route<true, false>(k, r))
-              : (section_car_filter ? update_route<false, true>(k, r)
-                                    : update_route<false, false>(k, r));
+      if constexpr (algo_version == version::kParaSkipList) {
+        any_marked |=
+            section_bike_filter
+                ? (section_car_filter ? update_route_skip_list<true, true>(k, r)
+                                      : update_route_skip_list<true, false>(k, r))
+                : (section_car_filter ? update_route_skip_list<false, true>(k, r)
+                                      : update_route_skip_list<false, false>(k, r));
+      } else {
+        any_marked |=
+            section_bike_filter
+                ? (section_car_filter ? update_route<true, true>(k, r)
+                                      : update_route<true, false>(k, r))
+                : (section_car_filter ? update_route<false, true>(k, r)
+                                      : update_route<false, false>(k, r));
+      }
     });
     return any_marked;
   }
@@ -1013,10 +1022,6 @@ private:
     auto et = std::array<transport, Vias + 1>{};
     auto v_offset = std::array<std::size_t, Vias + 1>{};
 
-    std::uint32_t r_ranks_from = 0U;
-    if constexpr (algo_version == version::kPara) {
-      r_ranks_from = rank_store_->route_rank_start_idx_[r];
-    }
     for (auto i = 0U; i != stop_seq.size(); ++i) {
       auto const stop_idx =
           static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
@@ -1041,18 +1046,234 @@ private:
           continue;
         }
 
-        if constexpr (algo_version == version::kPara) {
-          if (auto transfer_rank =
-                  rank_store_->ranks_[r_ranks_from + (i * 2)];
-              transfer_rank < start_lcls_[to_idx(r)] &&
-              transfer_rank < dest_lcls_[to_idx(r)]) {
-            stats_.n_arrival_pruned_by_para_++;
-            break;
-              }
+        trace(
+            "┊ │k={} v={}(+{})  stop_idx={}, location={}, round_times={}, "
+            "best={}, "
+            "tmp={}\n",
+            k, v, v_offset[v], stop_idx, loc{tt_, stp.location_idx()},
+            to_unix(round_times_[k - 1][l_idx][v]), to_unix(best_[l_idx][v]),
+            to_unix(tmp_[l_idx][v]));
+
+        if constexpr (WithSectionBikeFilter) {
+          if (!is_first &&
+              !tt_.route_bikes_allowed_per_section_[r][kFwd ? stop_idx - 1
+                                                            : stop_idx]) {
+            et[v] = {};
+            v_offset[v] = 0;
+          }
         }
 
+        if constexpr (WithSectionCarFilter) {
+          if (!is_first &&
+              !tt_.route_cars_allowed_per_section_[r][kFwd ? stop_idx - 1
+                                                           : stop_idx]) {
+            et[v] = {};
+            v_offset[v] = 0;
+          }
+        }
 
+        auto target_v = v + v_offset[v];
 
+        if (et[v].is_valid() && stp.can_finish<SearchDir>(is_wheelchair_)) {
+
+          if constexpr (algo_version == version::kParaPlainRanks) {
+            if (const auto route_arrival_rank = rank_store_.route_event_ranks_[r][(stop_idx * 2) - 1];
+                route_arrival_rank < min_lcls_[to_idx(r)]) {
+              stats_.n_arrival_pruned_by_para_++;
+              break;
+            }
+          }
+
+          auto const by_transport = time_at_stop(
+              r, et[v], stop_idx, kFwd ? event_type::kArr : event_type::kDep);
+
+          auto const is_via = target_v != Vias && is_via_[target_v][l_idx];
+          auto const is_no_stay_via =
+              is_via && via_stops_[target_v].stay_ == 0_minutes;
+
+          if (Vias != 0) {
+            trace_upd(
+                "┊ │k={} v={}(+{})={} via_count={} is_via_dest={} stay={} "
+                "is_via={} is_dest={}\n",
+                k, v, v_offset[v], target_v, Vias,
+                target_v != Vias ? is_via_[target_v][l_idx] : is_dest_[l_idx],
+                via_stops_[target_v].stay_, is_no_stay_via, is_dest_[l_idx]);
+          }
+
+          if (is_no_stay_via) {
+            ++v_offset[v];
+            ++target_v;
+          }
+
+          current_best[v] =
+              get_best(round_times_[k - 1][l_idx][target_v],
+                       tmp_[l_idx][target_v], best_[l_idx][target_v]);
+
+          assert(by_transport != std::numeric_limits<delta_t>::min() &&
+                 by_transport != std::numeric_limits<delta_t>::max());
+          if (is_better(by_transport, time_at_dest_[k]) &&
+              lb_[l_idx] != kUnreachable &&
+              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])) {
+            trace_upd(
+                "┊ │k={} v={}->{}    name={}, dbg={}, time_by_transport={}, "
+                "BETTER THAN current_best={} => update, {} marking station "
+                "{}!\n",
+                k, v, target_v, tt_.transport_name(et[v].t_idx_),
+                tt_.dbg(et[v].t_idx_), to_unix(by_transport),
+                to_unix(current_best[v]),
+                !is_better(by_transport, current_best[v]) ? "NOT" : "",
+                loc{tt_, stp.location_idx()});
+
+            ++stats_.n_earliest_arrival_updated_by_route_;
+            tmp_[l_idx][target_v] =
+                get_best(by_transport, tmp_[l_idx][target_v]);
+            state_.station_mark_.set(l_idx, true);
+            if (is_better(by_transport, current_best[v])) {
+              current_best[v] = by_transport;
+            }
+            any_marked = true;
+          } else {
+            trace(
+                "┊ │k={} v={}->{}    *** NO UPD: at={}, name={}, dbg={}, "
+                "time_by_transport={}, current_best=min({}, {}, {})={} => {} "
+                "- "
+                "LB={}, LB_AT_DEST={}, TIME_AT_DEST={}, "
+                "(is_better(by_transport={}={}, current_best={}={})={}, "
+                "is_better(by_transport={}={}, time_at_dest_={}={})={}, "
+                "reachable={}, "
+                "is_better(lb={}={}, time_at_dest_={}={})={})!\n",
+                k, v, target_v, loc{tt_, location_idx_t{l_idx}},
+                tt_.transport_name(et[v].t_idx_), tt_.dbg(et[v].t_idx_),
+                to_unix(by_transport),
+                to_unix(round_times_[k - 1][l_idx][target_v]),
+                to_unix(best_[l_idx][target_v]), to_unix(tmp_[l_idx][target_v]),
+                to_unix(current_best[v]), loc{tt_, location_idx_t{l_idx}},
+                lb_[l_idx], to_unix(time_at_dest_[k]),
+                to_unix(clamp(by_transport + dir(lb_[l_idx]))), by_transport,
+                to_unix(by_transport), current_best[v],
+                to_unix(current_best[v]),
+                is_better(by_transport, current_best[v]), by_transport,
+                to_unix(by_transport), time_at_dest_[k],
+                to_unix(time_at_dest_[k]),
+                is_better(by_transport, time_at_dest_[k]),
+                lb_[l_idx] != kUnreachable, by_transport + dir(lb_[l_idx]),
+                to_unix(clamp(by_transport + dir(lb_[l_idx]))),
+                time_at_dest_[k], to_unix(time_at_dest_[k]),
+                to_unix(time_at_dest_[k]),
+                is_better(clamp(by_transport + dir(lb_[l_idx])),
+                          time_at_dest_[k]));
+          }
+        } else {
+          trace(
+              "┊ │k={} v={}->{}    *** NO UPD: no_trip={}, in_allowed={}, "
+              "out_allowed={}, label_allowed={}\n",
+              k, v, target_v, !et[v].is_valid(), stp.in_allowed(),
+              stp.out_allowed(), (kFwd ? stp.out_allowed() : stp.in_allowed()));
+        }
+      }
+
+      if (is_last || !stp.can_start<SearchDir>(is_wheelchair_) ||
+          !state_.prev_station_mark_[l_idx]) {
+        continue;
+      }
+
+      if (lb_[l_idx] == kUnreachable) {
+        break;
+      }
+
+      if constexpr (algo_version == version::kParaPlainRanks) {
+        if (auto route_departure_rank =
+                rank_store_.route_event_ranks_[r][i * 2];
+            route_departure_rank < min_lcls_[to_idx(r)]) {
+          stats_.n_departure_pruned_by_para_++;
+          continue;
+        }
+      }
+
+      for (auto v = 0U; v != Vias + 1; ++v) {
+        if (!et[v].is_valid() && !state_.prev_station_mark_[l_idx]) {
+          continue;
+        }
+
+        auto const target_v = v + v_offset[v];
+        auto const et_time_at_stop =
+            et[v].is_valid()
+                ? time_at_stop(r, et[v], stop_idx,
+                               kFwd ? event_type::kDep : event_type::kArr)
+                : kInvalid;
+        auto const prev_round_time = round_times_[k - 1][l_idx][target_v];
+        if (prev_round_time != kInvalid &&
+            is_better_or_eq(prev_round_time, et_time_at_stop)) {
+          auto const [day, mam] = split(prev_round_time);
+          auto const new_et = get_earliest_transport(k, r, stop_idx, day, mam,
+                                                     stp.location_idx());
+          current_best[v] = get_best(current_best[v], best_[l_idx][target_v],
+                                     tmp_[l_idx][target_v]);
+          if (new_et.is_valid() &&
+              (current_best[v] == kInvalid ||
+               is_better_or_eq(
+                   time_at_stop(r, new_et, stop_idx,
+                                kFwd ? event_type::kDep : event_type::kArr),
+                   et_time_at_stop))) {
+            et[v] = new_et;
+            v_offset[v] = 0;
+            trace("┊ │k={} v={}    update et: time_at_stop={}\n", k, v,
+                  to_unix(et_time_at_stop));
+          } else if (new_et.is_valid()) {
+            trace("┊ │k={} v={}    update et: no update time_at_stop={}\n", k,
+                  v, to_unix(et_time_at_stop));
+          }
+        }
+      }
+    }
+    return any_marked;
+  }
+
+  template <bool WithSectionBikeFilter, bool WithSectionCarFilter>
+  bool update_route_skip_list(unsigned const k, route_idx_t const r) requires (algo_version == version::kParaSkipList) {
+    const auto min_lcl = min_lcls_[to_idx(r)];
+    if (to_idx(min_lcl) == 0) {
+      return update_route<WithSectionBikeFilter, WithSectionCarFilter>(k, r);
+    }
+    const auto scan_stops_from = rank_store_.scan_stop_starts_[r][to_idx(min_lcl) - 1];
+
+    auto const stop_seq = tt_.route_location_seq_[r];
+    bool any_marked = false;
+
+    auto et = std::array<transport, Vias + 1>{};
+    auto v_offset = std::array<std::size_t, Vias + 1>{};
+
+    auto i = 0U;
+    for (auto scan_stop_idx = static_cast<unsigned>(scan_stops_from);; ++scan_stop_idx) {
+      auto stop_to_scan = rank_store_.scan_stops_[scan_stop_idx];
+      i = stop_to_scan.stop_idx_;
+      if (i >= stop_seq.size()) {
+        break;
+      }
+
+      auto const stop_idx =
+          static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
+      auto const stp = stop{stop_seq[stop_idx]};
+      auto const l_idx = cista::to_idx(stp.location_idx());
+      auto const is_first = i == 0U;
+      auto const is_last = i == stop_seq.size() - 1U;
+
+      auto current_best = std::array<delta_t, Vias + 1>{};
+      current_best.fill(kInvalid);
+
+      // v = via state when entering the transport
+      // v + v_offset = via state at the current stop after entering the
+      // transport (v_offset > 0 if the transport passes via stops)
+      if (stop_to_scan.scan_arrive_ == 1) {
+        for (auto j = 0U; j != Vias + 1; ++j) {
+        auto const v = Vias - j;
+        if (!et[v].is_valid() && !state_.prev_station_mark_[l_idx]) {
+          trace(
+              "┊ │k={} v={}  stop_idx={} {}: not marked, no et - "
+              "skip\n",
+              k, v, stop_idx, loc{tt_, location_idx_t{l_idx}});
+          continue;
+        }
 
         trace(
             "┊ │k={} v={}(+{})  stop_idx={}, location={}, round_times={}, "
@@ -1170,6 +1391,7 @@ private:
               stp.out_allowed(), (kFwd ? stp.out_allowed() : stp.in_allowed()));
         }
       }
+      }
 
       if (is_last || !stp.can_start<SearchDir>(is_wheelchair_) ||
           !state_.prev_station_mark_[l_idx]) {
@@ -1180,49 +1402,41 @@ private:
         break;
       }
 
-      if constexpr (algo_version == version::kPara) {
-        if (auto transfer_rank =
-                rank_store_->ranks_[r_ranks_from + (1 + (i * 2))];
-            transfer_rank < start_lcls_[to_idx(r)] &&
-            transfer_rank < dest_lcls_[to_idx(r)]) {
-          stats_.n_departure_pruned_by_para_++;
-          continue;
-            }
-      }
-
-      for (auto v = 0U; v != Vias + 1; ++v) {
-        if (!et[v].is_valid() && !state_.prev_station_mark_[l_idx]) {
-          continue;
-        }
-
-        auto const target_v = v + v_offset[v];
-        auto const et_time_at_stop =
-            et[v].is_valid()
-                ? time_at_stop(r, et[v], stop_idx,
-                               kFwd ? event_type::kDep : event_type::kArr)
-                : kInvalid;
-        auto const prev_round_time = round_times_[k - 1][l_idx][target_v];
-        if (prev_round_time != kInvalid &&
-            is_better_or_eq(prev_round_time, et_time_at_stop)) {
-          auto const [day, mam] = split(prev_round_time);
-          auto const new_et = get_earliest_transport(k, r, stop_idx, day, mam,
-                                                     stp.location_idx());
-          current_best[v] = get_best(current_best[v], best_[l_idx][target_v],
-                                     tmp_[l_idx][target_v]);
-          if (new_et.is_valid() &&
-              (current_best[v] == kInvalid ||
-               is_better_or_eq(
-                   time_at_stop(r, new_et, stop_idx,
-                                kFwd ? event_type::kDep : event_type::kArr),
-                   et_time_at_stop))) {
-            et[v] = new_et;
-            v_offset[v] = 0;
-            trace("┊ │k={} v={}    update et: time_at_stop={}\n", k, v,
-                  to_unix(et_time_at_stop));
-          } else if (new_et.is_valid()) {
-            trace("┊ │k={} v={}    update et: no update time_at_stop={}\n", k,
-                  v, to_unix(et_time_at_stop));
+      if (stop_to_scan.scan_depart_ == 1) {
+        for (auto v = 0U; v != Vias + 1; ++v) {
+          if (!et[v].is_valid() && !state_.prev_station_mark_[l_idx]) {
+            continue;
           }
+
+          auto const target_v = v + v_offset[v];
+          auto const et_time_at_stop =
+              et[v].is_valid()
+                  ? time_at_stop(r, et[v], stop_idx,
+                                 kFwd ? event_type::kDep : event_type::kArr)
+                  : kInvalid;
+          auto const prev_round_time = round_times_[k - 1][l_idx][target_v];
+          if (prev_round_time != kInvalid &&
+              is_better_or_eq(prev_round_time, et_time_at_stop)) {
+            auto const [day, mam] = split(prev_round_time);
+            auto const new_et = get_earliest_transport(k, r, stop_idx, day, mam,
+                                                       stp.location_idx());
+            current_best[v] = get_best(current_best[v], best_[l_idx][target_v],
+                                       tmp_[l_idx][target_v]);
+            if (new_et.is_valid() &&
+                (current_best[v] == kInvalid ||
+                 is_better_or_eq(
+                     time_at_stop(r, new_et, stop_idx,
+                                  kFwd ? event_type::kDep : event_type::kArr),
+                     et_time_at_stop))) {
+              et[v] = new_et;
+              v_offset[v] = 0;
+              trace("┊ │k={} v={}    update et: time_at_stop={}\n", k, v,
+                    to_unix(et_time_at_stop));
+                     } else if (new_et.is_valid()) {
+                       trace("┊ │k={} v={}    update et: no update time_at_stop={}\n", k,
+                             v, to_unix(et_time_at_stop));
+                     }
+              }
         }
       }
     }
@@ -1408,8 +1622,8 @@ private:
   transfer_time_settings transfer_time_settings_;
 
   std::pair<component_idx_t, component_idx_t> start_dest_cmpnt_;
-  std::vector<rank_t> start_lcls_, dest_lcls_;
-  para::route_rank_store const* rank_store_;
+  std::vector<rank_t> min_lcls_;
+  [[no_unique_address]] rank_store_t rank_store_;
 };
 
 }  // namespace nigiri::routing

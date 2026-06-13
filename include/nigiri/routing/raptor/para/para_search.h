@@ -29,12 +29,21 @@
 
 namespace nigiri::routing::para {
 
+template <para_rank_store store_t>
 struct para_search {
 
-  using para_raptor = raptor<direction::kForward, false, 0U, search_mode::kOneToOne, version::kPara>;
+  static constexpr auto current_version = std::is_same_v<store_t, plain_route_rank_store>
+                                           ? version::kParaPlainRanks
+                                           : version::kParaSkipList;
+  using para_raptor = raptor<
+    direction::kForward,
+    false,
+    0U,
+    search_mode::kOneToOne,
+    current_version>;
 
   para_raptor init(raptor_state& raptor_state,
-                   route_rank_store const& rank_store) {
+                   store_t const& rank_store) {
     auto span = get_otel_tracer()->StartSpan("search::init");
     auto scope = opentelemetry::trace::Scope{span};
 
@@ -105,7 +114,7 @@ struct para_search {
   }
 
   para_search(timetable const& tt,
-              route_rank_store const& rank_store,
+              store_t const& rank_store,
               search_state& s,
               raptor_state& raptor_state,
               query q,

@@ -149,6 +149,22 @@ void correct_color_contrast(timetable& tt) {
   }
 }
 
+void write_location_routes_with_stop_idx(timetable& tt) {
+  for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+    std::vector<cista::pair<route_idx_t, stop_idx_t>> location_routes;
+    for (const auto& r : tt.location_routes_[loc]) {
+      const auto stop_seq = tt.route_location_seq_[r];
+      const auto it = std::find_if(stop_seq.begin(), stop_seq.end(), [loc](const auto s) {
+        return stop{s}.location_idx() == loc;
+      });
+      utl::verify(it != stop_seq.end(), "location not found");
+      location_routes.emplace_back(r, std::distance(stop_seq.begin(), it));
+    }
+    tt.location_routes_with_stop_idx_.emplace_back(location_routes);
+  }
+  utl::verify(tt.location_routes_.size() == tt.location_routes_with_stop_idx_.size(), "Dimensions do not match");
+}
+
 void finalize(timetable& tt, finalize_options const opt) {
   tt.location_routes_.resize(tt.n_locations());
 
@@ -188,6 +204,7 @@ void finalize(timetable& tt, finalize_options const opt) {
   assign_stops_to_flex_areas(tt);
   assign_importance(tt);
   correct_color_contrast(tt);
+  write_location_routes_with_stop_idx(tt);
 
   log(log_lvl::info, "nigiri.loader.finalize",
       "{} locations ({}% of idx space used)", tt.n_locations(),

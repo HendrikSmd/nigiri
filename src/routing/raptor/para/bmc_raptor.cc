@@ -22,11 +22,13 @@ bool bmc_journey::dominates(bmc_journey const& j1, bmc_journey const& j2) {
 bmc_raptor::bmc_raptor(timetable_view const& tt_view,
                        bmc_raptor_state& state,
                        bitvec const& destination_mask,
-                       bitvec const& transfer_mask)
+                       vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+                       bitvec const& route_event_mask)
     : tt_view_(tt_view),
       state_(state),
       destination_mask_(destination_mask),
-      transfer_mask_(transfer_mask),
+      route_event_mask_(route_event_mask),
+      route_events_from_(route_events_from),
       tt_day_mask_(get_tt_day_mask(tt_view.get_source_tt())) {
   state_.resize(tt_view.get_n_locations(), tt_view.get_n_routes(),
                 static_cast<unsigned int>(destination_mask_.count()));
@@ -201,7 +203,7 @@ void bmc_raptor::get_earliest_sufficient_transports(
     unsigned short stop_idx,
     bmc_raptor_route_bag_t& route_bag) {
   const auto& tt = tt_view_.get_source_tt();
-  auto const& dep_event_times =
+  auto const dep_event_times =
       tt.event_times_at_stop(route_idx, stop_idx, event_type::kDep);
 
   constexpr auto n_days_to_iterate = kMaxTravelTime.count() / 1440 + 1U;
@@ -397,87 +399,89 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
   bool any_marked = false;
   auto const& stop_sequence = tt.route_location_seq_[route_idx];
 
+  const auto first_route_event_idx = route_events_from_[route_idx];
+
   bmc_raptor_route_bag_t route_bag{};
   for (stop_idx_t stop_idx = 0U; stop_idx != stop_sequence.size(); ++stop_idx) {
     auto const stp = stop{stop_sequence[stop_idx]};
     auto const source_location_idx = stp.location_idx();
     auto const view_location_idx = tt_view_.get_view_idx(source_location_idx);
 
-    if (!transfer_mask_[to_idx(source_location_idx)]) {
-      continue;
-    }
+    if (stop_idx == 0 ||
+        route_event_mask_.test(first_route_event_idx + (stop_idx * 2) - 1)) {
+      auto const transfer_time_offset =
+          tt.locations_.transfer_time_[location_idx_t{source_location_idx}]
+              .count();
+      auto const is_destination =
+          destination_mask_[to_idx(source_location_idx)];
+      for (auto const& active_label : route_bag) {
+        if (active_label.label_.transport_idx_ ==
+            to_idx(transport_idx_t::invalid())) {
+          continue;
+        }
+        auto const new_arr_delta = tt.event_mam(
+            route_idx, transport_idx_t{active_label.label_.transport_idx_},
+            stop_idx, event_type::kArr);
 
-    auto const transfer_time_offset =
-        tt.locations_.transfer_time_[location_idx_t{source_location_idx}].count();
-    auto const is_destination = destination_mask_[to_idx(source_location_idx)];
-    for (auto const& active_label : route_bag) {
-      if (active_label.label_.transport_idx_ == transport_idx_t::invalid().v_) {
-        continue;
-      }
-      auto const new_arr_delta = tt.event_mam(
-          route_idx, transport_idx_t{active_label.label_.transport_idx_},
-          stop_idx, event_type::kArr);
+        auto const new_arr_day =
+            new_arr_delta.days() + active_label.label_.transport_day_offset_;
+        auto const new_arr_mam = new_arr_delta.mam();
 
-      auto const new_arr_day =
-          new_arr_delta.days() + active_label.label_.transport_day_offset_;
-      auto const new_arr_mam = new_arr_delta.mam();
+        int32_t const new_arr = new_arr_day * 1440 + new_arr_mam;
 
-      int32_t const new_arr = new_arr_day * 1440 + new_arr_mam;
+        if (!stp.out_allowed() ||
+            new_arr - active_label.label_.departure_ > kMaxTravelTime.count()) {
+          continue;
+        }
 
-      if (!stp.out_allowed() ||
-          new_arr - active_label.label_.departure_ > kMaxTravelTime.count()) {
-        continue;
-      }
+        auto const candidate_lbl = bmc_raptor_label{
+            .route_idx_ = to_idx(route_idx),
+            .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
+            .exit_stop_idx_ = stop_idx,
+            .arrival_ = static_cast<uint16_t>(new_arr),
+            .parent_bag_idx_ = active_label.label_.parent_bag_idx_,
+            .arrival_with_transfer_ =
+                static_cast<uint16_t>(new_arr + transfer_time_offset),
+            .departure_ = static_cast<uint16_t>(active_label.label_.departure_),
+            .is_footpath_ = 0,
+            .has_parent_ = 1};
 
-      const auto candidate_lbl = bmc_raptor_label{
-        .route_idx_ = to_idx(route_idx),
-        .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
-        .exit_stop_idx_ = stop_idx,
-        .arrival_ = static_cast<uint16_t>(new_arr),
-        .parent_bag_idx_ = active_label.label_.parent_bag_idx_,
-        .arrival_with_transfer_ =
-            static_cast<uint16_t>(new_arr + transfer_time_offset),
-        .departure_ = static_cast<uint16_t>(active_label.label_.departure_),
-        .is_footpath_ = 0,
-        .has_parent_ = 1
-      };
-
-      auto candidate_tdb = active_label.tdb_;
-      if (tt.is_location_transitive_.test(to_idx(source_location_idx))) {
-        if (is_destination) {
-          filter_by_dest_bag<false>(
-              state_.best_bags_[to_idx(view_location_idx)],
-              candidate_lbl, candidate_tdb);
+        auto candidate_tdb = active_label.tdb_;
+        const auto& best_bag = state_.best_bags_[to_idx(view_location_idx)];
+        if (tt.is_location_transitive_.test(to_idx(source_location_idx))) {
+          if (is_destination) {
+            filter_by_dest_bag<false>(best_bag, candidate_lbl, candidate_tdb);
+          } else {
+            filter_by_non_dest_bag<false>(best_bag, candidate_lbl,
+                                          candidate_tdb);
+          }
         } else {
-          filter_by_non_dest_bag<false>(
-              state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
+          if (is_destination) {
+            filter_by_dest_bag<true>(best_bag, candidate_lbl, candidate_tdb);
+          } else {
+            filter_by_non_dest_bag<true>(best_bag, candidate_lbl,
+                                         candidate_tdb);
+          }
+        }
+
+        if (candidate_tdb.none()) {
+          continue;
+        }
+
+        bool added = false;
+        if (is_destination) {
+          added = add_to_dest_round_bag(
+              state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl,
+              candidate_tdb);
+        } else {
+          added = add_to_non_dest_round_bag(
+              state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl,
               candidate_tdb);
         }
-      } else {
-        if (is_destination) {
-          filter_by_dest_bag<true>(
-              state_.best_bags_[to_idx(view_location_idx)],
-              candidate_lbl, candidate_tdb);
-        } else {
-          filter_by_non_dest_bag<true>(
-              state_.best_bags_[to_idx(view_location_idx)], candidate_lbl,
-              candidate_tdb);
+        if (added) {
+          state_.station_mark_.set(to_idx(view_location_idx), true);
+          any_marked = true;
         }
-      }
-
-      if (candidate_tdb.none()) {
-        continue;
-      }
-
-      bool added = false;
-      if (is_destination) {
-        added = add_to_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-      } else {
-        added = add_to_non_dest_round_bag(state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl, candidate_tdb);
-      }
-      if (added) {
-        state_.station_mark_.set(to_idx(view_location_idx), true);
-        any_marked = true;
       }
     }
 
@@ -485,7 +489,7 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
       return any_marked;
     }
 
-    if (stp.in_allowed() && state_.prev_station_mark_[to_idx(view_location_idx)]) {
+    if (stp.in_allowed() && state_.prev_station_mark_[to_idx(view_location_idx)] && route_event_mask_.test(first_route_event_idx + (stop_idx * 2))) {
       const auto& scan_bag = state_.round_bags_[k - 1][to_idx(view_location_idx)];
       for (const auto [i, l] : utl::enumerate(scan_bag)) {
         get_earliest_sufficient_transports(
@@ -511,11 +515,12 @@ void bmc_raptor::rounds() {
       bool is_destination = destination_mask_[to_idx(source_location_idx)];
       if (state_.station_mark_[to_idx(location_view_idx)]) {
         if (k > 1) {
-          for (auto const l : state_.round_bags_[k - 1][to_idx(location_view_idx)]) {
+          for (auto const& l : state_.round_bags_[k - 1][to_idx(location_view_idx)]) {
+            auto& best_bag = state_.best_bags_[to_idx(location_view_idx)];
             if (is_destination) {
-              add_to_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)], l.label_, l.tdb_);
+              add_to_dest_round_bag(best_bag, l.label_, l.tdb_);
             } else {
-              add_to_non_dest_round_bag(state_.best_bags_[to_idx(location_view_idx)],l.label_, l.tdb_);
+              add_to_non_dest_round_bag(best_bag, l.label_, l.tdb_);
             }
           }
         }
@@ -617,7 +622,7 @@ void bmc_raptor::gather_journeys() {
 unsigned bmc_raptor::end_k() { return kMaxTransfers + 1U; }
 
 void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx,
-                                               std::vector<bmc_journey>& bag) {
+                                               std::vector<bmc_journey>& bag) const {
   constexpr auto dom = [](bmc_journey const& l1, bmc_journey const& l2) {
     return bmc_journey::dominates(l1, l2);
   };

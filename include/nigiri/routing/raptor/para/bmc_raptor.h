@@ -21,7 +21,9 @@ struct bmc_journey {
 struct bmc_raptor {
 
   bmc_raptor(timetable_view const& tt_view, bmc_raptor_state& state,
-             bitvec const& destination_mask, bitvec const& transfer_mask);
+             bitvec const& destination_mask,
+             vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+             bitvec const& route_event_mask);
 
   template <auto dominates>
   static void cleanup_after_footpaths_added(bmc_raptor_bag_t& bag) {
@@ -65,10 +67,6 @@ struct bmc_raptor {
 
   static bool dominates_non_destination_skip_fps(bmc_raptor_label const& l1,
                                                  bmc_raptor_label const& l2);
-
-  static bool dominates(bmc_raptor_label const& l1, bmc_raptor_label const& l2) {
-    return l1.dominates_destination(l2);
-  }
 
   static void cleanup_after_footpaths_at_dest(bmc_raptor_bag_t& bag);
 
@@ -136,12 +134,13 @@ struct bmc_raptor {
   static unsigned end_k();
 
   void emplace_relative_journeys_for(location_idx_view_t location_view_idx,
-                                     std::vector<bmc_journey>& bag);
+                                     std::vector<bmc_journey>& bag) const;
 
   timetable_view const& tt_view_;
   bmc_raptor_state& state_;
   bitvec const& destination_mask_; // Indexed by source location_idx_t
-  bitvec const& transfer_mask_;    // Indexed by source location_idx_t
+  bitvec const& route_event_mask_;    // Indexed by source route_idx_t
+  vector_map<route_idx_t, std::uint32_t> const& route_events_from_;
   bitset<kMaxDays> const tt_day_mask_;
 };
 

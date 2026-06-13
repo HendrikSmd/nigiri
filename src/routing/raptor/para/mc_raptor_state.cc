@@ -5,6 +5,38 @@
 
 namespace nigiri::routing::para {
 
+bool mc_raptor_label::dominates_non_destination(mc_raptor_label const& o) const {
+  return departure_ >= o.departure_ &&
+         arrival_with_transfer_ <= o.arrival_with_transfer_;
+}
+
+bool mc_raptor_label::dominates_non_destination(mc_raptor_label const& l1,
+                                                mc_raptor_label const& l2) {
+  return l1.dominates_non_destination(l2);
+}
+
+bool mc_raptor_label::dominates_destination(mc_raptor_label const& o) const {
+  return departure_ >= o.departure_ &&
+         arrival_with_transfer_ <= o.arrival_;
+}
+
+bool mc_raptor_label::dominates_destination(mc_raptor_label const& l1,
+                                            mc_raptor_label const& l2) {
+  return l1.dominates_destination(l2);
+}
+
+bool mc_raptor_route_label::dominates(mc_raptor_route_label const& other) const {
+  return departure_ >= other.departure_ &&
+         (transport_.day_ < other.transport_.day_ ||
+            (transport_.day_ == other.transport_.day_ && transport_.t_idx_ <= other.transport_.t_idx_)
+         );
+}
+
+bool mc_raptor_route_label::dominates(mc_raptor_route_label const& l1,
+                                      mc_raptor_route_label const& l2) {
+  return l1.dominates(l2);
+}
+
 void mc_raptor_state::resize(unsigned const n_locations,
                              unsigned const n_routes,
                              unsigned const n_destinations) {

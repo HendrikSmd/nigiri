@@ -29,11 +29,11 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   bitvec const& route_mask,
                                                   bitvec const& transfer_mask,
                                                   bool use_start_footpaths);
-*/
+
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   mc_raptor_state& state,
                                                   bitvec const& reconstruct_mask,
                                                   bitvec const& route_mask,
                                                   bitvec const& transfer_mask);
-
+*/
 }  // namespace nigiri::routing::para

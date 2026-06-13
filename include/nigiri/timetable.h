@@ -196,6 +196,15 @@ struct timetable {
     return location_routes_[loc].size();
   }
 
+  unsigned n_route_events() const {
+    auto n_events = 0U;
+    for (auto r_idx = route_idx_t{0U}; r_idx < n_routes(); ++r_idx) {
+      const auto n_stops = route_location_seq_[r_idx].size();
+      n_events += (n_stops * 2) - 2;
+    }
+    return n_events;
+  }
+
   size_t n_events_for_route(route_idx_t const r) const {
     size_t res = 0;
     auto const& loc_seq = route_location_seq_[r];
@@ -415,6 +424,10 @@ struct timetable {
 
   // Location -> list of routes
   vecvec<location_idx_t, route_idx_t> location_routes_;
+
+  vecvec<location_idx_t, cista::pair<route_idx_t, stop_idx_t>> location_routes_with_stop_idx_;
+
+  
 
   // Route 1:
   //   stop-1-dep: [trip1, trip2, ..., tripN]

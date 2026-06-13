@@ -46,8 +46,18 @@ struct pareto_set {
     return utl::any_of(els_, [&](T const& x) { return x.dominates(el); });
   }
 
+  template <auto dominates>
+  bool is_dominated(T const& el) const {
+    return utl::any_of(els_, [&](T const& x) { return dominates(x, el); });
+  }
+
   std::tuple<bool, iterator, iterator> add(T el) {
     return pareto_utils<T>::pareto_add(els_, std::move(el), [](const T& a, const T& b) { return T::dominates(a, b); });
+  }
+
+  template <auto dominates>
+  std::tuple<bool, iterator, iterator> add(T el) {
+    return pareto_utils<T>::pareto_add(els_, std::move(el), [](const T& a, const T& b) { return dominates(a, b); });
   }
 
   void add_not_optimal(T j) { els_.emplace_back(std::move(j)); }

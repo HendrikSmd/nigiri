@@ -12,7 +12,10 @@
 #include "nigiri/routing/raptor/para/bmc_raptor.h"
 #include "nigiri/routing/raptor/para/customization.h"
 #include "nigiri/routing/raptor/para/export_partition.h"
+#include "nigiri/routing/raptor/para/export_routes.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
+#include "nigiri/routing/raptor/para/para_raptor_search.h"
+#include "nigiri/routing/raptor/para/para_search.h"
 #include "nigiri/routing/raptor/para/route_hyper_graph.h"
 #include "nigiri/routing/raptor/para/route_partition.h"
 #include "nigiri/routing/raptor/raptor.h"
@@ -58,13 +61,13 @@ pareto_set<routing::journey> raptor_search(
 }
 
 pareto_set<routing::journey> para_raptor_search(
-    timetable const& tt, routing::para::route_rank_store const& rs, routing::query q) {
+    timetable const& tt, routing::para::plain_route_rank_store const& rs, routing::query q) {
   using namespace nigiri;
   using algo_state_t = routing::raptor_state;
   static auto search_state = routing::search_state{};
   static auto algo_state = algo_state_t{};
 
-  return *(routing::para_raptor_search(tt, rs, search_state, algo_state,
+  return *(routing::para::para_raptor_search<routing::para::plain_route_rank_store>(tt, rs, search_state, algo_state,
                                        std::move(q), std::nullopt)
                .journeys_);
 }
@@ -79,7 +82,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
   routing::para::timetable_view tt_view(tt, route_mask);
 
   routing::para::bmc_raptor raptor(
-    tt_view, state, destination_mask, transfer_mask);
+    tt_view, state, destination_mask, {} ,transfer_mask);
 
   const auto start_loc = q.start_.front().target();
   const auto dest_loc = q.destination_.front().target();
@@ -96,7 +99,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 8> sub_commands = {
+  static constexpr std::array<sub_command, 10> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
@@ -105,7 +108,9 @@ int main(int argc, char** argv) {
       {"inspect-rank-store", "outputs information on the given rank store"},
       {"clique-cover", "computing a clique cover for the foot-graph of the given timetable"},
       {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"},
-      {"check-transport-order", "checks if the transports are ordered correctly"}
+      {"check-transport-order", "checks if the transports are ordered correctly"},
+      {"export-routes", "export routes of timetable to geojson"},
+      {"convert-ranks", "converts plain route rank stores into other representations"}
     }
   };
 
@@ -149,7 +154,7 @@ int main(int argc, char** argv) {
   std::string command = vm["command"].as<std::string>();
 
   bpo::variables_map cvm;
-  if(command == "export-hgraph") {
+  if (command == "export-hgraph") {
     auto in = fs::path{};
     auto out = fs::path{"hyper-graph.out.txt"};
     auto node_weights = true;
@@ -358,17 +363,23 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in_tt);
     tt.resolve();
 
-    routing::para::customizer customizer{tt};
-    auto const store = customizer.construct_route_rank_store(
-      std::move(*routing::para::route_partition::read(in_part)));
-    store.print_summary(std::cout);
-    store.write(out);
+    auto partition = *routing::para::route_partition::read(in_part);
 
+    routing::para::customizer customizer{tt};
+
+    vecvec<route_idx_t, rank_t> final_ranks;
+    customizer.compute_ranks(partition, final_ranks);
+
+    routing::para::plain_route_rank_store rank_store;
+    rank_store.digest(tt, std::move(partition), std::move(final_ranks));
+    rank_store.print_summary(std::cout, tt);
+    rank_store.write(out);
   } else if (command == "inspect-rank-store") {
     auto in_store = fs::path{};
-
+    auto in_tt = fs::path{};
     bpo::options_description inspect_rank_store("inspect-rank-store options");
     inspect_rank_store.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
         ("in_store", bpo::value(&in_store), "path to the rank store");
 
     if (vm.contains("help")) {
@@ -381,8 +392,12 @@ int main(int argc, char** argv) {
 
     bpo::store(bpo::command_line_parser(opts).options(inspect_rank_store).run(), cvm);
     bpo::notify(cvm);
-    auto store = *routing::para::route_rank_store::read(in_store);
-    store.print_summary(std::cout);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto store = *routing::para::plain_route_rank_store::read(in_store);
+    store.print_summary(std::cout, tt);
   } else if (command == "clique-cover") {
     auto in_tt = fs::path{};
 
@@ -499,7 +514,7 @@ int main(int argc, char** argv) {
     auto tt = *timetable::read(in_tt);
     tt.resolve();
 
-    auto rs = *routing::para::route_rank_store::read(in_rs);
+    auto rs = *routing::para::plain_route_rank_store::read(in_rs);
 
     interval<unixtime_t> start_time = {
       .from_ = sys_days(2026_y / March / 16_d) + 15_hours +  56_minutes,
@@ -627,7 +642,72 @@ int main(int argc, char** argv) {
       }
       std::cout << std::endl;
     }
+  } else if (command == "export-routes") {
+    auto in_store = fs::path{};
+    auto in_tt = fs::path{};
+    auto out_file = fs::path{};
+    bpo::options_description export_routes_desc("export-routes options");
+    export_routes_desc.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("in_store", bpo::value(&in_store), "path to the rank store")
+        ("out_file", bpo::value(&out_file), "path to the output file");
 
+    if (vm.contains("help")) {
+      std::cout << export_routes_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(export_routes_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto const& store = *routing::para::plain_route_rank_store::read(in_store);
+
+    std::ofstream out(out_file, std::ios::out);
+    routing::para::export_routes(tt, out, store);
+  } else if (command == "convert-ranks") {
+    auto in_store = fs::path{};
+    auto in_tt = fs::path{};
+    auto out_file = fs::path{};
+    std::string out_store = "skipList";
+
+    bpo::options_description export_routes_desc("export-routes options");
+    export_routes_desc.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("in_store", bpo::value(&in_store), "path to the input plain route rank store")
+        ("out_store",bpo::value(&out_store)->default_value(out_store), "format of the output store: skipList")
+        ("out_file", bpo::value(&out_file), "path to the output file");
+
+    if (vm.contains("help")) {
+      std::cout << export_routes_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(export_routes_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto plain_rank_store = *routing::para::plain_route_rank_store::read(in_store);
+
+    if (out_store == "skipList") {
+      routing::para::skip_list_route_rank_store skip_list_store;
+      skip_list_store.digest(tt, std::move(plain_rank_store.partition_),
+                             std::move(plain_rank_store.route_event_ranks_));
+
+      skip_list_store.write(out_file);
+    } else {
+      utl::fail("Store format unknown");
+    }
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }

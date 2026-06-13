@@ -1,111 +1,45 @@
 #pragma once
 
 #include <vector>
-#include <optional>
-#include <variant>
-
-#include "date/date.h"
-
-#include "cista/containers/flat_matrix.h"
 
 #include "nigiri/routing/pareto_set.h"
 #include "nigiri/routing/journey.h"
 #include "nigiri/routing/raptor/para/routing_time.h"
-#include "nigiri/footpath.h"
+#include "nigiri/common/standard_flat_matrix.h"
 #include "nigiri/types.h"
 
-namespace nigiri {
-struct timetable;
-}
 
 namespace nigiri::routing::para {
 
 struct mc_raptor_label {
-  struct transport_leg {
-    transport_leg(location_idx_t enter,
-                  transport via,
-                  location_idx_t exit)
-        : enter_(enter),
-          via_(via),
-          exit_(exit) {}
 
-    location_idx_t enter_;
-    transport via_;
-    location_idx_t exit_;
-  };
+  bool        dominates_non_destination(mc_raptor_label const& o) const;
+  static bool dominates_non_destination(mc_raptor_label const& l1, mc_raptor_label const& l2);
 
-  struct footpath_leg {
-    footpath_leg(duration_t duration,
-                  location_idx_t target)
-        : duration_(duration),
-          target_(target) {}
+  bool        dominates_destination(mc_raptor_label const& o) const;
+  static bool dominates_destination(mc_raptor_label const& l1, mc_raptor_label const& l2);
 
-    duration_t duration_;
-    location_idx_t target_;
-  };
-
-  mc_raptor_label()
-    : arrival_(routing_time::min(), routing_time::min()),
-      departure_(routing_time::max()) {}
-
-  mc_raptor_label(routing_time arrival, duration_t transfer_time, routing_time dep)
-    : arrival_(arrival, arrival + transfer_time),
-      departure_(dep) {}
-
-  mc_raptor_label(routing_time arrival, duration_t transfer_time, routing_time dep, pareto_set<mc_raptor_label>::const_iterator prev)
-      : arrival_(arrival, arrival + transfer_time),
-        departure_(dep),
-        prev_(prev) {}
-
-  inline bool equals(const mc_raptor_label& other) const noexcept {
-        return  arrival_ == other.arrival_ &&
-                departure_ == other.departure_;
-  }
-
-  static bool dominates(const mc_raptor_label& l1, const mc_raptor_label& l2) noexcept {
-        return  get<1>(l1.arrival_) <= get<0>(l2.arrival_) &&
-                l1.departure_ >= l2.departure_;
-  }
-
-  std::tuple<routing_time, routing_time> arrival_;
+  routing_time arrival_;
+  routing_time arrival_with_transfer_;
   routing_time departure_;
-
-  pareto_set<mc_raptor_label>::const_iterator prev_;
-
-  std::optional<transport_leg> with_;
-  std::optional<footpath_leg> transfer_;
+  std::uint32_t route_idx_;
+  std::uint16_t enter_stop_idx_;
+  std::uint16_t exit_stop_idx_;
+  std::uint32_t parent_bag_idx_;
+  bool is_footpath_;
+  bool has_parent_;
 };
 
 struct mc_raptor_route_label {
-  mc_raptor_route_label()
-      : transport_(transport{transport_idx_t::invalid(), day_idx_t::invalid()}),
-        departure_(routing_time::max()) {}
 
-  mc_raptor_route_label(transport transport,
-                        location_idx_t entered,
-                        routing_time departure,
-                        pareto_set<mc_raptor_label>::const_iterator prev)
-      : transport_(transport),
-        entered_(entered),
-        departure_(departure),
-        prev_(prev) {}
-
-  bool equals(const mc_raptor_route_label& other) const noexcept {
-        return  departure_ == other.departure_ &&
-               transport_.t_idx_ == other.transport_.t_idx_ &&
-               transport_.day_ == other.transport_.day_;
-  }
-
-  static bool dominates(const mc_raptor_route_label& l1, const mc_raptor_route_label& l2) noexcept {
-        return  l1.departure_ >= l2.departure_ &&
-               (l1.transport_.day_ < l2.transport_.day_ || (l1.transport_.day_ == l2.transport_.day_ && l1.transport_.t_idx_ <= l2.transport_.t_idx_));
-  }
+  bool        dominates(mc_raptor_route_label const& other) const;
+  static bool dominates(mc_raptor_route_label const& l1, mc_raptor_route_label const& l2);
 
   transport transport_;
-  location_idx_t entered_;
   routing_time departure_;
 
-  pareto_set<mc_raptor_label>::const_iterator prev_;
+  std::uint32_t parent_bag_idx_;
+  std::uint16_t enter_stop_idx_;
 };
 
 using journey_with_label = std::pair<journey, mc_raptor_label>;
@@ -125,7 +59,7 @@ struct mc_raptor_state {
   void reset();
 
   std::vector<pareto_set<mc_raptor_label>> best_;
-  cista::raw::flat_matrix<pareto_set<mc_raptor_label>> round_bags_;
+  simple_flat_matrix<pareto_set<mc_raptor_label>> round_bags_;
   bitvec station_mark_;
   bitvec prev_station_mark_;
   bitvec route_mark_;

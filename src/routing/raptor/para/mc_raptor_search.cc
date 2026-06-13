@@ -59,7 +59,6 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
   raptor.route();
   return state.results_;
 }
-*/
 std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
                                                   mc_raptor_state& state,
                                                   bitvec const& reconstruct_mask,
@@ -75,5 +74,6 @@ std::vector<pareto_set<journey>> mc_raptor_search(timetable const& tt,
   raptor.route();
   return state.results_;
 }
+*/
 
 }  // namespace nigiri::routing::para

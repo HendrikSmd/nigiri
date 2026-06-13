@@ -3,8 +3,6 @@
 #include "nigiri/timetable.h"
 #include "nigiri/types.h"
 
-#include <ranges>
-
 namespace nigiri::routing::para {
 
 struct timetable_view {

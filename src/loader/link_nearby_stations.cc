@@ -28,8 +28,8 @@ struct dist_at {
 };
 
 void link_nearby_stations(timetable& tt) {
-  constexpr auto const kLinkNearbyMaxDistance = 300.0;  // [m];
-  constexpr auto const kEqDist = 100.0;  // [m];
+  constexpr auto const kLinkNearbyMaxDistance = 100.0;  // [m];
+  constexpr auto const kEqDist = 50.0;  // [m];
 
   auto const locations_rtree =
       geo::make_point_rtree(tt.locations_.coordinates_);

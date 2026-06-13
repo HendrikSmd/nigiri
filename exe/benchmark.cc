@@ -13,6 +13,7 @@
 #include "nigiri/query_generator/generator.h"
 #include "nigiri/routing/raptor/para/mc_raptor.h"
 #include "nigiri/routing/raptor/para/mc_raptor_search.h"
+#include "nigiri/routing/raptor/para/para_raptor_search.h"
 #include "nigiri/routing/raptor/raptor.h"
 #include "nigiri/routing/raptor_search.h"
 #include "nigiri/routing/search.h"
@@ -187,9 +188,11 @@ void process_queries_para_raptor(
     std::vector<nigiri::query_generation::start_dest_query> const& queries,
     std::vector<benchmark_result>& results,
     nigiri::timetable const& tt,
-    para::route_rank_store const& rank_store) {
+    std::string const& para_specifier,
+    std::filesystem::path const& ranks_path) {
   results.reserve(queries.size());
   std::mutex mutex;
+
   {
     auto query_processing_timer =
         scoped_timer(fmt::format("processing of {} queries", queries.size()));
@@ -200,24 +203,49 @@ void process_queries_para_raptor(
       search_state ss_;
       raptor_state rs_;
     };
-    utl::parallel_for_run_threadlocal<raptor_query_state>(
-      queries.size(), [&](auto& query_state, auto const q_idx) {
-      try {
-        auto const total_time_start = std::chrono::steady_clock::now();
-        auto const result = routing::para_raptor_search(
-            tt, rank_store, query_state.ss_, query_state.rs_,
-            queries[q_idx].q_);
-        auto const total_time_stop = std::chrono::steady_clock::now();
-        auto const guard = std::lock_guard{mutex};
-        results.emplace_back(benchmark_result{
-            q_idx, result, *result.journeys_,
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                total_time_stop - total_time_start)});
-        progress_tracker->increment();
-      } catch (std::exception const& e) {
-        std::cout << e.what();
-      }
-    });
+    if (para_specifier == "para-raptor") {
+      auto const rank_store = *para::plain_route_rank_store::read(ranks_path);
+      utl::parallel_for_run_threadlocal<raptor_query_state>(
+          queries.size(), [&](auto& query_state, auto const q_idx) {
+            try {
+              auto const total_time_start = std::chrono::steady_clock::now();
+              auto const result =
+                  para::para_raptor_search<para::plain_route_rank_store>(
+                      tt, rank_store, query_state.ss_, query_state.rs_,
+                      queries[q_idx].q_);
+              auto const total_time_stop = std::chrono::steady_clock::now();
+              auto const guard = std::lock_guard{mutex};
+              results.emplace_back(benchmark_result{
+                  q_idx, result, *result.journeys_,
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      total_time_stop - total_time_start)});
+              progress_tracker->increment();
+            } catch (std::exception const& e) {
+              std::cout << e.what();
+            }
+          });
+    } else if (para_specifier == "para-raptor-skip") {
+      auto const rank_store = *para::skip_list_route_rank_store::read(ranks_path);
+      utl::parallel_for_run_threadlocal<raptor_query_state>(
+          queries.size(), [&](auto& query_state, auto const q_idx) {
+            try {
+              auto const total_time_start = std::chrono::steady_clock::now();
+              auto const result =
+                  para::para_raptor_search<para::skip_list_route_rank_store>(
+                      tt, rank_store, query_state.ss_, query_state.rs_,
+                      queries[q_idx].q_);
+              auto const total_time_stop = std::chrono::steady_clock::now();
+              auto const guard = std::lock_guard{mutex};
+              results.emplace_back(benchmark_result{
+                  q_idx, result, *result.journeys_,
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      total_time_stop - total_time_start)});
+              progress_tracker->increment();
+            } catch (std::exception const& e) {
+              std::cout << e.what();
+            }
+          });
+    }
   }
 }
 
@@ -507,8 +535,8 @@ int main(int argc, char* argv[]) {
   auto tt = *nigiri::timetable::read(tt_path);
   tt.resolve();
 
-  utl::verify(algorithm == "raptor" || algorithm == "para-raptor", "unknown algorithm");
-  if (algorithm == "para-raptor") {
+  utl::verify(algorithm == "raptor" || algorithm == "para-raptor" || algorithm == "para-raptor-skip", "unknown algorithm");
+  if (algorithm == "para-raptor" || algorithm == "para-raptor-skip") {
     utl::verify(vm.count("rs_path") != 0U, "Rank store path required for para-raptor");
   }
 
@@ -616,10 +644,8 @@ int main(int argc, char* argv[]) {
   auto results = std::vector<benchmark_result>{};
   if (algorithm == "raptor") {
     process_queries_raptor(queries, results, tt);
-  } else if (algorithm == "para-raptor") {
-    std::cout << "loading timetable...\n";
-    auto rank_store = *nigiri::routing::para::route_rank_store::read(rank_store_path);
-    process_queries_para_raptor(queries, results, tt, rank_store);
+  } else {
+    process_queries_para_raptor(queries, results, tt, algorithm, rank_store_path);
   }
 
   print_results(queries, results, tt, gs, tt_path);
