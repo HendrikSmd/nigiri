@@ -55,6 +55,16 @@ bool mc_raptor::add_to_dest_round_bag(pareto_set<mc_raptor_label>& bag,
   return std::get<0>(bag.add<&dominates_destination>(label));
 }
 
+bool mc_raptor::add_careful_to_dest_round_bag(pareto_set<mc_raptor_label>& bag,
+                                              mc_raptor_label const& label) {
+  return std::get<0>(bag.add_careful<&dominates_destination>(label));
+}
+
+bool mc_raptor::add_careful_to_non_dest_round_bag(pareto_set<mc_raptor_label>& bag,
+                                                  mc_raptor_label const& label) {
+  return std::get<0>(bag.add_careful<&dominates_non_destination>(label));
+}
+
 mc_raptor::mc_raptor(timetable_view const& tt_view,
                      mc_raptor_state& state,
                      bitvec const& destination_mask,
@@ -253,6 +263,9 @@ void mc_raptor::update_footpaths(unsigned const k) const {
 
     auto const fps = tt.locations_.footpaths_out_[kDefaultProfile][source_location_idx];
     for (const auto& rl : round_bag) {
+      if (rl.is_footpath_) {
+        break;
+      }
 
       auto const base_arr = rl.arrival_;
       auto const dep = rl.departure_;
@@ -300,29 +313,35 @@ void mc_raptor::update_footpaths(unsigned const k) const {
           continue;
         }
 
-          buffered_labels[to_idx(target_view_idx)].push_back(label_with_foot);
+        if (to_idx(target_view_idx) < i || tt.is_location_transitive_[to_idx(target)]) {
+          bool added = false;
+          if (is_target_destination) {
+            added = add_to_dest_round_bag(
+                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot);
+          } else {
+            added = add_to_non_dest_round_bag(
+                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot);
+          }
+          if (added) {
+            state_.station_mark_.set(to_idx(target_view_idx), true);
+          }
+        } else {
+          bool added = false;
+          if (is_target_destination) {
+            added = add_careful_to_dest_round_bag(
+                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot);
+          } else {
+            added = add_careful_to_non_dest_round_bag(
+                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot);
+          }
+          if (added) {
+            state_.fp_label_added_.set(to_idx(target_view_idx), true);
+            state_.station_mark_.set(to_idx(target_view_idx), true);
+          }
         }
+      }
     }
   });
-
-  for (auto l_view_idx = location_idx_view_t{0U}; l_view_idx != n_locations_; ++l_view_idx) {
-
-    location_idx_t const source_location_idx =
-        tt_view_.get_source_idx(l_view_idx);
-    bool const is_destination = destination_mask_[to_idx(source_location_idx)];
-
-    for (auto const& l : buffered_labels[to_idx(l_view_idx)]) {
-      bool added = false;
-      if (is_destination) {
-        added = add_to_dest_round_bag(state_.round_bags_[k][to_idx(l_view_idx)], l);
-      } else {
-        added = add_to_non_dest_round_bag(state_.round_bags_[k][to_idx(l_view_idx)], l);
-      }
-      if (added) {
-        state_.station_mark_.set(to_idx(l_view_idx), true);
-      }
-    }
-  }
 }
 
 transport mc_raptor::get_earliest_transport(const mc_raptor_label& current,

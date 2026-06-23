@@ -32,9 +32,18 @@ namespace nigiri::routing::para {
 template <para_rank_store store_t>
 struct para_search {
 
-  static constexpr auto current_version = std::is_same_v<store_t, plain_route_rank_store>
-                                           ? version::kParaPlainRanks
-                                           : version::kParaSkipList;
+  static constexpr auto current_version = [] {
+    if constexpr (std::is_same_v<store_t, plain_route_rank_store>) {
+      return version::kParaPlainRanks;
+    } else if constexpr (std::is_same_v<store_t, skip_list_route_rank_store_lcl_packed>) {
+      return version::kParaSkipListLclPacked;
+    } else if constexpr (std::is_same_v<store_t, skip_list_route_rank_store_route_packed>) {
+      return version::kParaSkipListRoutePacked;
+    } else if constexpr (std::is_same_v<store_t, bitvec_route_rank_store>) {
+      return version::kParaBitvecWithBmi;
+    }
+  }();
+
   using para_raptor = raptor<
     direction::kForward,
     false,

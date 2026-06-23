@@ -32,6 +32,20 @@ struct pareto_utils {
     return {true, std::next(set.begin(), static_cast<unsigned>(set.size() - 1)),
             set.end()};
   }
+
+  template <typename Compare>
+  static std::tuple<bool, iterator, iterator> pareto_add_careful(std::vector<T>& set, T el, Compare dominates) {
+    for (auto i = 0U; i < set.size(); ++i) {
+      const auto& in_el = set[i];
+      if (dominates(in_el, el)) {
+        return {false, set.end(), std::next(set.begin(), i)};
+      }
+    }
+    set.resize(set.size() + 1);
+    set.back() = std::move(el);
+    return {true, std::next(set.begin(), static_cast<unsigned>(set.size() - 1)),
+            set.end()};
+  }
 };
 
 template <typename T>
@@ -58,6 +72,11 @@ struct pareto_set {
   template <auto dominates>
   std::tuple<bool, iterator, iterator> add(T el) {
     return pareto_utils<T>::pareto_add(els_, std::move(el), [](const T& a, const T& b) { return dominates(a, b); });
+  }
+
+  template <auto dominates>
+  std::tuple<bool, iterator, iterator> add_careful(T el) {
+    return pareto_utils<T>::pareto_add_careful(els_, std::move(el), [](const T& a, const T& b) { return dominates(a, b); });
   }
 
   void add_not_optimal(T j) { els_.emplace_back(std::move(j)); }

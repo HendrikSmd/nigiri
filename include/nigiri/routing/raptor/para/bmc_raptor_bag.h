@@ -48,7 +48,7 @@ struct bmc_raptor_bag {
   template <auto dominates>
   bool add_careful(T label, search_bitfield tdb) {
     for (size_t i = 0U; i < labels_.size(); ++i) {
-      auto& el = labels_[i];
+      const auto& el = labels_[i];
       if (dominates(el.label_, label)) {
         tdb &= ~el.tdb_;
         if (!tdb.any()) {

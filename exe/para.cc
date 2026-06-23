@@ -674,24 +674,24 @@ int main(int argc, char** argv) {
     auto in_store = fs::path{};
     auto in_tt = fs::path{};
     auto out_file = fs::path{};
-    std::string out_store = "skipList";
+    std::string out_store = "skipListLclPacked";
 
-    bpo::options_description export_routes_desc("export-routes options");
-    export_routes_desc.add_options()
+    bpo::options_description convert_ranks_desc("convert-ranks options");
+    convert_ranks_desc.add_options()
         ("in_tt", bpo::value(&in_tt), "path to the timetable")
         ("in_store", bpo::value(&in_store), "path to the input plain route rank store")
-        ("out_store",bpo::value(&out_store)->default_value(out_store), "format of the output store: skipList")
+        ("out_store",bpo::value(&out_store)->default_value(out_store), "format of the output store: skipListLclPacked, skipListRoutePacked, bitvecRankStore")
         ("out_file", bpo::value(&out_file), "path to the output file");
 
     if (vm.contains("help")) {
-      std::cout << export_routes_desc << "\n\n";
+      std::cout << convert_ranks_desc << "\n\n";
       return 0;
     }
 
     std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
     opts.erase(opts.begin());
 
-    bpo::store(bpo::command_line_parser(opts).options(export_routes_desc).run(), cvm);
+    bpo::store(bpo::command_line_parser(opts).options(convert_ranks_desc).run(), cvm);
     bpo::notify(cvm);
 
     auto tt = *timetable::read(in_tt);
@@ -699,15 +699,87 @@ int main(int argc, char** argv) {
 
     auto plain_rank_store = *routing::para::plain_route_rank_store::read(in_store);
 
-    if (out_store == "skipList") {
-      routing::para::skip_list_route_rank_store skip_list_store;
+    if (out_store == "skipListLclPacked") {
+      routing::para::skip_list_route_rank_store_lcl_packed skip_list_store;
       skip_list_store.digest(tt, std::move(plain_rank_store.partition_),
                              std::move(plain_rank_store.route_event_ranks_));
 
       skip_list_store.write(out_file);
+    } else if (out_store == "skipListRoutePacked") {
+      routing::para::skip_list_route_rank_store_route_packed skip_list_store;
+      skip_list_store.digest(tt, std::move(plain_rank_store.partition_),
+                             std::move(plain_rank_store.route_event_ranks_));
+
+      skip_list_store.write(out_file);
+    } else if (out_store == "bitvecRankStore") {
+      routing::para::bitvec_route_rank_store bitvec_route_rank_store;
+      bitvec_route_rank_store.digest(
+          tt, std::move(plain_rank_store.partition_),
+          std::move(plain_rank_store.route_event_ranks_));
+      bitvec_route_rank_store.write(out_file);
     } else {
       utl::fail("Store format unknown");
     }
+  } else if (command == "compare-bitvec") {
+    auto in_plain_store = fs::path{};
+    auto in_bitvec_store = fs::path{};
+    auto in_tt = fs::path{};
+
+    bpo::options_description convert_ranks_desc("convert-ranks options");
+    convert_ranks_desc.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("in_plain_store", bpo::value(&in_plain_store), "path to the input plain route rank store")
+        ("in_bitvec_store",bpo::value(&in_bitvec_store), "format of the output store: skipListLclPacked, skipListRoutePacked, bitvecRankStore");
+
+    if (vm.contains("help")) {
+      std::cout << convert_ranks_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(convert_ranks_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto plain_rank_store = *routing::para::plain_route_rank_store::read(in_plain_store);
+    auto bitvec_rank_store = *routing::para::bitvec_route_rank_store::read(in_bitvec_store);
+
+    const route_idx_t route_idx{100};
+    const auto stop_seq = tt.route_location_seq_[route_idx];
+    for (stop_idx_t stop_idx = 0U; stop_idx < stop_seq.size(); stop_idx++) {
+      if (stop_idx > 0) {
+        std::cout << "arrRank: " << static_cast<int>(to_idx(plain_rank_store.route_event_ranks_[route_idx][stop_idx * 2 - 1])) << ", ";
+      }
+
+      if (stop_idx < stop_seq.size()-1) {
+        std::cout << "depRank: " << static_cast<int>(to_idx(plain_rank_store.route_event_ranks_[route_idx][stop_idx * 2])) << " -> ";
+      }
+    }
+    std::cout << std::endl;
+    size_t count = 0U;
+    {
+      const auto timer = scoped_timer("some computation");
+      for (auto min_lcl = rank_t{1U}; min_lcl <= rank_t{4U}; ++min_lcl) {
+        for (auto r = route_idx_t{0U}; r < tt.n_routes(); ++r) {
+          bitvec_rank_store.for_each_stop_to_scan<true>(
+              route_idx, min_lcl,
+              [&](stop_idx_t const, bool const scan_dep,
+                  bool const scan_arr) {
+                if (scan_dep || scan_arr) {
+                  count++;
+                }
+                return false;
+              });
+        }
+      }
+    }
+    std::cout << count << std::endl;
+
+
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
   }

@@ -63,6 +63,12 @@ struct mc_raptor {
   static bool                 add_to_dest_round_bag(pareto_set<mc_raptor_label>& bag,
                                                     mc_raptor_label const& label);
 
+  static bool                 add_careful_to_dest_round_bag(pareto_set<mc_raptor_label>& bag,
+                                                            mc_raptor_label const& label);
+
+  static bool                 add_careful_to_non_dest_round_bag(pareto_set<mc_raptor_label>& bag,
+                                                                mc_raptor_label const& label);
+
   template <bool skip_bag_arrivals_with_fps>
   static bool is_dominated_by_non_dest_bag(
       pareto_set<mc_raptor_label> const& bag, mc_raptor_label const& label) {

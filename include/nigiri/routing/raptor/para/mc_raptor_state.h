@@ -60,6 +60,7 @@ struct mc_raptor_state {
 
   std::vector<pareto_set<mc_raptor_label>> best_;
   simple_flat_matrix<pareto_set<mc_raptor_label>> round_bags_;
+  bitvec fp_label_added_;
   bitvec station_mark_;
   bitvec prev_station_mark_;
   bitvec route_mark_;
