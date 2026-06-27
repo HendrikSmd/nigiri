@@ -51,45 +51,16 @@ bool bmc_raptor::dominates_non_destination(bmc_raptor_label const& l1,
   return l1.dominates_non_destination(l2);
 }
 
-bool bmc_raptor::dominates_destination_skip_fps(bmc_raptor_label const& l1,
-                                                bmc_raptor_label const& l2) {
-  return l1.is_footpath_ != 1 && l1.dominates_destination(l2);
-}
-
-bool bmc_raptor::dominates_non_destination_skip_fps(bmc_raptor_label const& l1,
-                                                    bmc_raptor_label const& l2) {
-  return l1.is_footpath_ != 1 && l1.dominates_non_destination(l2);
-}
-
-void bmc_raptor::cleanup_after_footpaths_at_dest(bmc_raptor_bag_t& bag) {
-  cleanup_after_footpaths_added<&dominates_destination>(bag);
-}
-
-void bmc_raptor::cleanup_after_footpaths_at_non_dest(bmc_raptor_bag_t& bag) {
-  cleanup_after_footpaths_added<&dominates_non_destination>(bag);
-}
-
-bool bmc_raptor::add_carefully_to_dest_round_bag(bmc_raptor_bag_t& bag,
-                                                 const bmc_raptor_label& label,
-                                                 search_bitfield sbf) {
-  return bag.add_careful<&dominates_destination>(label, sbf);
-}
-
-bool bmc_raptor::add_carefully_to_non_dest_round_bag(
-    bmc_raptor_bag_t& bag, bmc_raptor_label const& label, search_bitfield sbf) {
-  return bag.add_careful<&dominates_non_destination>(label, sbf);
-}
-
 bool bmc_raptor::add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
                                            bmc_raptor_label const& label,
                                            search_bitfield const bf) {
-  return bag.add<&dominates_non_destination>(label, bf);
+  return bag.add<&dominates_non_destination, bmc_raptor_label::equals>(label, bf);
 }
 
 bool bmc_raptor::add_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                        bmc_raptor_label const& label,
                                        search_bitfield const bf) {
-  return bag.add<&dominates_destination>(label, bf);
+  return bag.add<&dominates_destination, bmc_raptor_label::equals>(label, bf);
 }
 
 bool bmc_raptor::add_to_route_bag(bmc_raptor_route_bag_t& bag,
@@ -99,7 +70,7 @@ bool bmc_raptor::add_to_route_bag(bmc_raptor_route_bag_t& bag,
                           bmc_raptor_route_label const& l2) {
     return l1.dominates(l2);
   };
-  return bag.add<dom>(label, bf);
+  return bag.add<dom, bmc_raptor_route_label::equals>(label, bf);
 }
 
 void bmc_raptor::init_location_with_offset(location_idx_view_t const location_idx_view,
@@ -159,16 +130,11 @@ void bmc_raptor::init_location_with_offset(location_idx_view_t const location_id
         if (label_bf.any()) {
           bool const added = add_to_non_dest_round_bag(
               state_.round_bags_[0U][to_idx(location_idx_view)],
-              {.route_idx_ = 0U,
-               .enter_stop_idx_ = 0U,
-               .exit_stop_idx_ = 0U,
+              {
                .arrival_ = arrival_t,
-               .parent_bag_idx_ = 0U,
                .arrival_with_transfer_ = arrival_t,
                .departure_ = static_cast<uint16_t>(normalized_start_time_mam),
-               .is_footpath_ = static_cast<uint16_t>(
-                   (minutes_to_arrive > 0_minutes) ? 1 : 0),
-               .has_parent_ = 0},
+              },
               label_bf);
           if (added) {
             state_.station_mark_.set(to_idx(location_idx_view), true);
@@ -195,7 +161,7 @@ void bmc_raptor::init_starts(location_idx_view_t const location_idx,
 }
 
 void bmc_raptor::get_earliest_sufficient_transports(
-    std::uint32_t const bag_idx,
+    std::uint32_t,
     std::uint16_t departure,
     std::uint16_t arrival_with_transfer,
     search_bitfield const& label_tdb,
@@ -272,9 +238,7 @@ void bmc_raptor::get_earliest_sufficient_transports(
             route_bag,
             {
                 .transport_idx_ = transport.v_,
-                .enter_stop_idx_ = stop_idx,
                 .transport_day_offset_ = static_cast<int16_t>(net_shift_right),
-                .parent_bag_idx_ = bag_idx,
                 .departure_ = departure,
             },
             matches);
@@ -288,20 +252,32 @@ void bmc_raptor::update_footpaths(unsigned const k) {
   const auto& tt = tt_view_.get_source_tt();
 
   state_.station_mark_.for_each_set_bit([&](std::uint32_t const i) {
-    auto const& round_bag = state_.round_bags_[k][i];
     location_idx_view_t const location_view_idx{i};
     location_idx_t const source_location_idx =
         tt_view_.get_source_idx(location_view_idx);
 
-    auto const fps = tt.locations_.footpaths_out_[kDefaultProfile][source_location_idx];
-    for (auto rl_view : round_bag) {
-    if (rl_view.label_.is_footpath_ == 1) {
-      // All remaining labels are footpaths
-      break;
-    }
+    const auto is_transitive = tt.is_location_transitive_.test(to_idx(source_location_idx));
 
-    auto const base_arr = rl_view.label_.arrival_;
-    auto const dep = rl_view.label_.departure_;
+    auto const& scan_bag = is_transitive ? state_.round_bags_[k][i] :
+                                           state_.tmp_bags_[i];
+
+    auto const fps = tt.locations_.footpaths_out_[kDefaultProfile][source_location_idx];
+    for (auto const label : scan_bag) {
+      auto const base_arr = label.label_.arrival_;
+      auto const dep = label.label_.departure_;
+      if (!is_transitive) {
+        bool added = false;
+        if (destination_mask_.test(to_idx(source_location_idx))) {
+          added = add_to_dest_round_bag(
+              state_.round_bags_[k][i], label.label_, label.tdb_);
+        } else {
+          added = add_to_non_dest_round_bag(
+              state_.round_bags_[k][i], label.label_, label.tdb_);
+        }
+        if (added) {
+          state_.station_mark_.set(i, true);
+        }
+      }
 
       for (auto const& fp : fps) {
         auto const target = fp.target();
@@ -309,7 +285,6 @@ void bmc_raptor::update_footpaths(unsigned const k) {
         if (target == source_location_idx) {
           continue;
         }
-
         std::uint16_t const arr_with_foot =
             base_arr + static_cast<uint16_t>(fp.duration().count());
 
@@ -317,17 +292,11 @@ void bmc_raptor::update_footpaths(unsigned const k) {
           continue;
         }
         const bmc_raptor_label label_with_foot{
-            .route_idx_ = rl_view.label_.route_idx_,
-            .enter_stop_idx_ = rl_view.label_.enter_stop_idx_,
-            .exit_stop_idx_ = rl_view.label_.exit_stop_idx_,
             .arrival_ = arr_with_foot,
-            .parent_bag_idx_ = rl_view.label_.parent_bag_idx_,
             .arrival_with_transfer_ = arr_with_foot,
             .departure_ = dep,
-            .is_footpath_ = 1,
-            .has_parent_ = rl_view.label_.has_parent_,
         };
-        auto tdb = rl_view.tdb_;
+        auto tdb = label.tdb_;
 
         location_idx_view_t const target_view_idx =
             tt_view_.get_view_idx(target);
@@ -337,10 +306,10 @@ void bmc_raptor::update_footpaths(unsigned const k) {
         bool const is_target_destination = destination_mask_[to_idx(target)];
 
         if (is_target_destination) {
-          filter_by_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
+          filter_by_dest_bag(state_.best_bags_[to_idx(target_view_idx)],
                                     label_with_foot, tdb);
         } else {
-          filter_by_non_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
+          filter_by_non_dest_bag(state_.best_bags_[to_idx(target_view_idx)],
                                         label_with_foot, tdb);
         }
 
@@ -348,50 +317,23 @@ void bmc_raptor::update_footpaths(unsigned const k) {
           continue;
         }
 
-        if (to_idx(target_view_idx) < i || tt.is_location_transitive_[to_idx(target)]) {
-          bool added = false;
-          if (is_target_destination) {
-            added = add_to_dest_round_bag(
-                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
-                tdb);
-          } else {
-            added = add_to_non_dest_round_bag(
-                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
-                tdb);
-          }
-          if (added) {
-            state_.station_mark_.set(to_idx(target_view_idx), true);
-          }
+
+        bool added = false;
+        if (is_target_destination) {
+          added = add_to_dest_round_bag(
+              state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
+              tdb);
         } else {
-          bool added = false;
-          if (is_target_destination) {
-            added = add_carefully_to_dest_round_bag(
-                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
-                tdb);
-          } else {
-            added = add_carefully_to_non_dest_round_bag(
-                state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
-                tdb);
-          }
-          if (added) {
-            state_.fp_label_added_.set(to_idx(target_view_idx), true);
-            state_.station_mark_.set(to_idx(target_view_idx), true);
-          }
+          added = add_to_non_dest_round_bag(
+              state_.round_bags_[k][to_idx(target_view_idx)], label_with_foot,
+              tdb);
+        }
+        if (added) {
+          state_.station_mark_.set(to_idx(target_view_idx), true);
         }
       }
     }
   });
-
-  state_.fp_label_added_.for_each_set_bit([&](std::uint32_t const j) {
-    location_idx_view_t view_j(j);
-    location_idx_t source_j = tt_view_.get_source_idx(view_j);
-    if (destination_mask_[to_idx(source_j)]) {
-      cleanup_after_footpaths_at_dest(state_.round_bags_[k][to_idx(view_j)]);
-    } else {
-      cleanup_after_footpaths_at_non_dest(state_.round_bags_[k][to_idx(view_j)]);
-    }
-  });
-  utl::fill(state_.fp_label_added_.blocks_, 0U);
 }
 
 bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
@@ -435,33 +377,23 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
         }
 
         auto const candidate_lbl = bmc_raptor_label{
-            .route_idx_ = to_idx(route_idx),
-            .enter_stop_idx_ = active_label.label_.enter_stop_idx_,
-            .exit_stop_idx_ = stop_idx,
             .arrival_ = static_cast<uint16_t>(new_arr),
-            .parent_bag_idx_ = active_label.label_.parent_bag_idx_,
             .arrival_with_transfer_ =
                 static_cast<uint16_t>(new_arr + transfer_time_offset),
-            .departure_ = static_cast<uint16_t>(active_label.label_.departure_),
-            .is_footpath_ = 0,
-            .has_parent_ = 1};
+            .departure_ = static_cast<uint16_t>(active_label.label_.departure_)
+        };
 
         auto candidate_tdb = active_label.tdb_;
         const auto& best_bag = state_.best_bags_[to_idx(view_location_idx)];
-        if (tt.is_location_transitive_.test(to_idx(source_location_idx))) {
+        const auto is_transitive = tt.is_location_transitive_.test(to_idx(source_location_idx));
+        if (is_transitive) {
           if (is_destination) {
-            filter_by_dest_bag<false>(best_bag, candidate_lbl, candidate_tdb);
+            filter_by_dest_bag(best_bag, candidate_lbl, candidate_tdb);
           } else {
-            filter_by_non_dest_bag<false>(best_bag, candidate_lbl,
-                                          candidate_tdb);
+            filter_by_non_dest_bag(best_bag, candidate_lbl, candidate_tdb);
           }
         } else {
-          if (is_destination) {
-            filter_by_dest_bag<true>(best_bag, candidate_lbl, candidate_tdb);
-          } else {
-            filter_by_non_dest_bag<true>(best_bag, candidate_lbl,
-                                         candidate_tdb);
-          }
+          // Todo
         }
 
         if (candidate_tdb.none()) {
@@ -469,13 +401,14 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
         }
 
         bool added = false;
+        auto& insert_in_bag = is_transitive ? state_.round_bags_[k][to_idx(view_location_idx)] : state_.tmp_bags_[to_idx(view_location_idx)];
         if (is_destination) {
           added = add_to_dest_round_bag(
-              state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl,
+              insert_in_bag, candidate_lbl,
               candidate_tdb);
         } else {
           added = add_to_non_dest_round_bag(
-              state_.round_bags_[k][to_idx(view_location_idx)], candidate_lbl,
+              insert_in_bag, candidate_lbl,
               candidate_tdb);
         }
         if (added) {

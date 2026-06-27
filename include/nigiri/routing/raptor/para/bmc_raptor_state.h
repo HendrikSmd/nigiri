@@ -22,10 +22,10 @@ struct bmc_raptor_state {
   void reset();
 
   std::vector<bmc_raptor_bag_t> best_bags_;
+  std::vector<bmc_raptor_bag_t> tmp_bags_;
   simple_flat_matrix<bmc_raptor_bag_t> round_bags_;
 
   std::vector<pareto_set<journey>> results_;
-  bitvec fp_label_added_;
   bitvec station_mark_;
   bitvec prev_station_mark_;
   bitvec route_mark_;

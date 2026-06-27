@@ -14,4 +14,12 @@ bool bmc_raptor_route_label::dominates(bmc_raptor_route_label const& l1,
   return l1.dominates(l2);
 }
 
+bool bmc_raptor_route_label::equals(bmc_raptor_route_label const& l1,
+                                    bmc_raptor_route_label const& l2) {
+  return l1.departure_ == l2.departure_ &&
+         l1.transport_day_offset_ == l2.transport_day_offset_ &&
+         l1.transport_idx_ == l2.transport_idx_;
+}
+
+
 } // nigiri::routing::raptor::para

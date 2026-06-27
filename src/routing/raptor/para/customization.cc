@@ -237,7 +237,7 @@ void customizer::bmc_cut_routing_task(
 
   const auto cut_cmpnt_from = task.component_idx_;
   auto const cell = task.cell_idx_;
-  auto const level = task.level_;
+  //auto const level = task.level_;
   auto const bin_index = task.bin_idx_;
 
   if (context.last_cell_idx_ != cell) {
@@ -273,15 +273,11 @@ void customizer::bmc_cut_routing_task(
         static_cast<uint16_t>(rel_dep_event.dep_min_after_midnight_.count());
     bool added = bmc_raptor::add_to_non_dest_round_bag(
         state.round_bags_[0U][to_idx(from_loc_view_idx)],
-        {.route_idx_ = 0U,
-         .enter_stop_idx_ = 0U,
-         .exit_stop_idx_ = 0U,
+        {
          .arrival_ = dep,
-         .parent_bag_idx_ = 0U,
          .arrival_with_transfer_ = dep,
-         .departure_ = dep,
-         .is_footpath_ = 0,
-         .has_parent_ = 0},
+         .departure_ = dep
+        },
         sbf);
     if (added) {
       state.station_mark_.set(cista::to_idx(from_loc_view_idx), true);
@@ -303,12 +299,12 @@ void customizer::bmc_cut_routing_task(
     raptor.emplace_relative_journeys_for(destination_loc_view_idx,
                                          bmc_journey_bag);
 
-    for (auto const& bmc_j : bmc_journey_bag) {
-      bmc_backtrack_and_update_ranks(bmc_j.label_iter_, state, context,
-                                 bmc_j.transfers_ + 1, location_idx_t{i}, level,
-                                 cell, cut_cmpnt_from, task.atomic_route_ranks_,
-                                 task.atomic_route_event_ranks_);
-    }
+    // for (auto const& bmc_j : bmc_journey_bag) {
+    //   bmc_backtrack_and_update_ranks(bmc_j.label_iter_, state, context,
+    //                              bmc_j.transfers_ + 1, location_idx_t{i}, level,
+    //                              cell, cut_cmpnt_from, task.atomic_route_ranks_,
+    //                              task.atomic_route_event_ranks_);
+    // }
 
     bmc_journey_bag.clear();
   });
@@ -402,54 +398,54 @@ void customizer::mc_cut_routing_task(
   ++cell_progress[to_idx(cell)];
 }
 
-void customizer::bmc_backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
-                                            bmc_raptor_state const& state,
-                                            local_thread_context const& context,
-                                            const unsigned k,
-                                            location_idx_t,
-                                            std::uint8_t const level,
-                                            cell_idx_t,
-                                            component_idx_t,
-                                            atomic_ranks_t& atomic_route_ranks,
-                                            atomic_ranks_t& atomic_route_event_ranks) {
-
-  auto current_label = root_label->label_;
-  auto current_k = k;
-
-  while (current_label.has_parent_ == 1U) {
-    const auto route_idx = current_label.route_idx_;
-
-    const auto& stop_sequence = tt_.route_location_seq_[route_idx_t{route_idx}];
-
-    auto const enter_stop_idx = current_label.enter_stop_idx_;
-    auto const exit_stop_idx = current_label.exit_stop_idx_;
-
-
-    auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
-
-    auto const enter_loc_idx = enter_stp.location_idx();
-    auto const enter_loc_view_idx = context.tt_view_.get_view_idx(enter_loc_idx);
-    utl::verify(enter_loc_view_idx != location_idx_view_t::invalid(),
-               "Unmapped location while backtracking");
-
-
-
-    if (route_idx != to_idx(route_idx_t::invalid())) {
-      auto const from = route_event_starts_index_[route_idx_t{route_idx}];
-      const unsigned dep_route_rank_off = (enter_stop_idx * 2);
-      const unsigned arr_route_rank_off = (exit_stop_idx * 2) - 1;
-      atomic_route_ranks[route_idx].store(level + 1);
-      atomic_route_event_ranks[from + dep_route_rank_off].store(level + 1);
-      atomic_route_event_ranks[from + arr_route_rank_off].store(level + 1);
-    }
-
-    current_label =
-        state.round_bags_[current_k - 1][to_idx(enter_loc_view_idx)]
-            .labels_[current_label.parent_bag_idx_]
-            .label_;
-    current_k--;
-  }
-}
+// void customizer::bmc_backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator root_label,
+//                                             bmc_raptor_state const& state,
+//                                             local_thread_context const& context,
+//                                             const unsigned k,
+//                                             location_idx_t,
+//                                             std::uint8_t const level,
+//                                             cell_idx_t,
+//                                             component_idx_t,
+//                                             atomic_ranks_t& atomic_route_ranks,
+//                                             atomic_ranks_t& atomic_route_event_ranks) {
+//
+//   auto current_label = root_label->label_;
+//   auto current_k = k;
+//
+//   while (current_label.has_parent_ == 1U) {
+//     const auto route_idx = current_label.route_idx_;
+//
+//     const auto& stop_sequence = tt_.route_location_seq_[route_idx_t{route_idx}];
+//
+//     auto const enter_stop_idx = current_label.enter_stop_idx_;
+//     auto const exit_stop_idx = current_label.exit_stop_idx_;
+//
+//
+//     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
+//
+//     auto const enter_loc_idx = enter_stp.location_idx();
+//     auto const enter_loc_view_idx = context.tt_view_.get_view_idx(enter_loc_idx);
+//     utl::verify(enter_loc_view_idx != location_idx_view_t::invalid(),
+//                "Unmapped location while backtracking");
+//
+//
+//
+//     if (route_idx != to_idx(route_idx_t::invalid())) {
+//       auto const from = route_event_starts_index_[route_idx_t{route_idx}];
+//       const unsigned dep_route_rank_off = (enter_stop_idx * 2);
+//       const unsigned arr_route_rank_off = (exit_stop_idx * 2) - 1;
+//       atomic_route_ranks[route_idx].store(level + 1);
+//       atomic_route_event_ranks[from + dep_route_rank_off].store(level + 1);
+//       atomic_route_event_ranks[from + arr_route_rank_off].store(level + 1);
+//     }
+//
+//     current_label =
+//         state.round_bags_[current_k - 1][to_idx(enter_loc_view_idx)]
+//             .labels_[current_label.parent_bag_idx_]
+//             .label_;
+//     current_k--;
+//   }
+// }
 
 void customizer::mc_backtrack_and_update_ranks(pareto_set<mc_raptor_label>::const_iterator const root_label,
                                                mc_raptor_state const& state,
