@@ -38,6 +38,8 @@ void get_cmpnt_dep_events(
   timetable const& tt,
   component_idx_t cmpnt_idx,
   bitvec const& route_mask,
+  vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+  bitvec const& route_event_mask,
   std::vector<std::vector<cmpnt_dep_event>>& cmpnt_dep_events);
 
 void get_starts(

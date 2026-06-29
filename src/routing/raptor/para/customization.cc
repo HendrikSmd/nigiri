@@ -130,7 +130,8 @@ void customizer::initialize(route_partition const& p) {
   start_times_registry_.clear();
   start_times_registry_.populate(tt_, n_of_cells_on_first_lvl,
                                  current_lvl_cells_of_components_,
-                                 route_masks_, true);
+                                 route_masks_, route_event_starts_index_,
+                                 route_event_mask_, true);
 }
 
 void customizer::initialize_route_masks(route_partition const& p) {
@@ -203,7 +204,8 @@ void customizer::prepare_next_level() {
 
   start_times_registry_.populate(tt_, n_cells_in_next_level,
                                  current_lvl_cells_of_components_,
-                                 route_masks_, true);
+                                 route_masks_, route_event_starts_index_,
+                                 route_event_mask_, true);
 }
 
 inline void binary_or_reduce(std::vector<bitvec>& vec) {

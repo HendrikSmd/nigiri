@@ -76,6 +76,8 @@ void get_departure_events(
     location_idx_t const dep_loc_idx,
     cmpnt_loc_idx_t const cmpnt_dep_loc_idx,
     bitvec const& route_mask,
+    vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+    bitvec const& route_event_mask,
     std::vector<cmpnt_dep_event>& departure_events
 ) {
   // Iterate routes visiting the location.
@@ -83,6 +85,8 @@ void get_departure_events(
     if (!route_mask[to_idx(r)]) {
       continue;
     }
+
+    const auto route_event_mask_from = route_events_from[r];
     // Iterate the location sequence, searching the given location.
     auto const location_seq = tt.route_location_seq_.at(r);
     trace_start("  location_seq: route={}\n", r);
@@ -101,6 +105,10 @@ void get_departure_events(
         continue;
       }
 
+      if (!route_event_mask.test(route_event_mask_from + static_cast<unsigned int>(i) * 2)) {
+        continue;
+      }
+
       get_departure_events_at_stop(
           tt, r, static_cast<stop_idx_t>(i),
           cmpnt_dep_loc_idx, departure_events);
@@ -112,12 +120,15 @@ void get_cmpnt_dep_events(
     timetable const& tt,
     component_idx_t const cmpnt_idx,
     bitvec const& route_mask,
+    vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+    bitvec const& route_event_mask,
     std::vector<std::vector<cmpnt_dep_event>>& cmpnt_dep_events) {
   const auto& cmpnt_locs = tt.component_locations_[cmpnt_idx];
   cmpnt_dep_events.resize(cmpnt_locs.size());
   for (const auto [cmpnt_loc_idx, loc_idx] : utl::enumerate(cmpnt_locs)) {
     get_departure_events(tt, loc_idx, cmpnt_loc_idx_t{cmpnt_loc_idx},
-                         route_mask, cmpnt_dep_events[cmpnt_loc_idx]);
+                         route_mask, route_events_from, route_event_mask,
+                         cmpnt_dep_events[cmpnt_loc_idx]);
   }
 }
 

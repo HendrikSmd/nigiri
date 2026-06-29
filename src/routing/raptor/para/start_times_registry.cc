@@ -55,14 +55,16 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
   void populate_start_times_for(component_idx_t const cut_cmpnt_idx,
                                 timetable const& tt,
                                 bitvec const& route_mask,
+                                vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+                                bitvec const& route_event_mask,
                                 bool const compress_bins,
                                 std::vector<relativized_component_departure_event>& dep_events_buffer,
                                 std::vector<size_t>& bin_start_idxs,
                                 std::vector<bin_range_t>& cell_cmpnt_search_bins) {
     const auto& cmpnt_locations = tt.component_locations_[cut_cmpnt_idx];
     std_vecvec<cmpnt_dep_event> imm_dep_events(cmpnt_locations.size());
-    get_cmpnt_dep_events(tt, cut_cmpnt_idx, route_mask,
-                         imm_dep_events);
+    get_cmpnt_dep_events(tt, cut_cmpnt_idx, route_mask, route_events_from,
+                         route_event_mask, imm_dep_events);
 
     for (auto& inner : imm_dep_events) {
       std::ranges::sort(inner, std::less{}, &cmpnt_dep_event::dep_time_);
@@ -84,6 +86,8 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
   void populate_start_times_for_cell(timetable const& tt,
                                      std::vector<component_idx_t> const& cut_cmpnts,
                                      bitvec const& route_mask,
+                                     vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+                                     bitvec const& route_event_mask,
                                      std::vector<relativized_component_departure_event>& dep_events_buffer,
                                      bool const compress_bins,
                                      std::vector<size_t>& bin_start_idxs,
@@ -93,8 +97,9 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
     }
 
     for (const auto cut_cmpnt_idx : cut_cmpnts) {
-      populate_start_times_for(cut_cmpnt_idx, tt, route_mask, compress_bins,
-                               dep_events_buffer, bin_start_idxs, cmpnt_search_bins);
+      populate_start_times_for(cut_cmpnt_idx, tt, route_mask, route_events_from,
+                               route_event_mask, compress_bins, dep_events_buffer,
+                               bin_start_idxs, cmpnt_search_bins);
     }
     // sentinel
     bin_start_idxs.push_back(dep_events_buffer.size());
@@ -123,6 +128,8 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
                                       size_t const n_of_cells,
                                       std_vecvec<cell_idx_t> const& cmpnt_to_cell_idxs,
                                       std::vector<bitvec> const& route_masks,
+                                      vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+                                      bitvec const& route_event_mask,
                                       bool const compress_bins) {
     auto const timer = scoped_timer("Populating departure events");
     resize(n_of_cells);
@@ -130,9 +137,10 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
 
     const auto cell_cut_cmpnts = collect_cell_cut_cmpnts(tt, n_of_cells, cmpnt_to_cell_idxs);
     for (auto cell_idx = 0U; cell_idx < n_of_cells; ++cell_idx) {
-      populate_start_times_for_cell(tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx],
-                                    cmpnt_dep_events_buffer_[cell_idx], compress_bins,
-                                    bin_start_idxs_[cell_idx], cell_cmpnt_search_bins_[cell_idx]);
+      populate_start_times_for_cell(tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx], route_events_from,
+                                    route_event_mask, cmpnt_dep_events_buffer_[cell_idx],
+                                    compress_bins, bin_start_idxs_[cell_idx],
+                                    cell_cmpnt_search_bins_[cell_idx]);
     }
   }
 

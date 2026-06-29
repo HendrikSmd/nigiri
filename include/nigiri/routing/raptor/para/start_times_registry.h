@@ -22,6 +22,8 @@ struct start_times_registry {
                 size_t n_of_cells,
                 std_vecvec<cell_idx_t> const& cmpnt_to_cell_idxs,
                 std::vector<bitvec> const& route_masks,
+                vector_map<route_idx_t, std::uint32_t> const& route_events_from,
+                bitvec const& route_event_mask,
                 bool compress_bins);
 
   void resize(size_t n_of_cells);
