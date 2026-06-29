@@ -1,7 +1,9 @@
 #include "nigiri/routing/raptor/para/customization.h"
 
-#include <thread>
+#include "boost/thread/pthread/once_atomic.hpp"
+
 #include <stop_token>
+#include <thread>
 
 #include "utl/zip.h"
 #include "nigiri/common/parallel_for_with_args.h"
@@ -38,10 +40,12 @@ void customizer::compute_ranks(route_partition const& partition, vecvec<route_id
 
   atomic_ranks_t atomic_route_ranks(tt_.n_routes());
   atomic_ranks_t atomic_route_event_ranks(tt_.n_route_events());
+  atomic_ranks_t atomic_fp_ranks(tt_.locations_.footpaths_out_[kDefaultProfile].data_.size());
 
   std::vector<std::atomic<size_t>> cell_progress(partition.get_num_of_cells_on_level(0U));
   for (std::uint16_t level = 0U; level <= static_cast<std::uint16_t>(partition.n_levels_); ++level) {
     log(log_lvl::info, "customization", "starting to process {} cells on level {}", partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)), level);
+    update_cut_component_fps(atomic_fp_ranks, static_cast<std::uint8_t>(level));
     std::ranges::fill(cell_progress, 0U);
     level_finished.store(false);
     std::thread logger_thread([&] {
@@ -66,7 +70,8 @@ void customizer::compute_ranks(route_partition const& partition, vecvec<route_id
                              level,
                              bin_i,
                              atomic_route_ranks,
-                             atomic_route_event_ranks);
+                             atomic_route_event_ranks,
+                             atomic_fp_ranks);
         }
         ++cut_cmpnt_bin_range_iter;
       });
@@ -86,7 +91,8 @@ void customizer::compute_ranks(route_partition const& partition, vecvec<route_id
     mark_routes_and_events_from_ranks(partition,
                                       static_cast<std::uint8_t>(level),
                                       atomic_route_ranks,
-                                      atomic_route_event_ranks);
+                                      atomic_route_event_ranks,
+                                      atomic_fp_ranks);
     prepare_next_level();
     if (no_bits_set_in(cell_cut_components_)) {
       log(log_lvl::info, "customization", "No more cut components. Terminating shortly");
@@ -119,6 +125,12 @@ void customizer::initialize(route_partition const& p) {
 
   marked_route_events_.resize(tt_.n_route_events());
   marked_route_events_.zero_out();
+
+  const auto n_footpaths = tt_.locations_.footpaths_out_[kDefaultProfile].data_.size();
+  marked_foot_paths_.resize(n_footpaths);
+  marked_foot_paths_.zero_out();
+  foot_path_mask_ = bitvec::max(n_footpaths);
+
   compute_route_event_ranks_index();
 
   initialize_route_masks(p);
@@ -188,17 +200,20 @@ void customizer::prepare_next_level() {
   for (auto route_mask : route_masks_) {
     route_mask &= marked_routes_;
   }
-  // 2. Update route events
+  // 2. Update route event marks
   route_event_mask_ &= marked_route_events_;
 
-  // 3. unite route masks (parent routes = union of children routes)
+  // 3. Update foot path marks
+  foot_path_mask_ &= marked_foot_paths_;
+
+  // 4. unite route masks (parent routes = union of children routes)
   unite_route_masks();
-  // 4. unite cut stop masks. A cut stop of cell C on level i + 1 is a
+  // 5. unite cut stop masks. A cut stop of cell C on level i + 1 is a
   // cut stop on level i for one (or both) of C's children
   unite_cut_stops();
   unite_cut_cmpnts();
 
-  // 5. update incident cell indexes of
+  // 6. update incident cell indexes of
   // components for next level
   update_component_cell_idxs_for_next_level();
 
@@ -256,7 +271,8 @@ void customizer::bmc_cut_routing_task(
   bmc_raptor raptor{context.tt_view_, state,
                     cell_cut_stops_[to_idx(cell)],
                     route_event_starts_index_,
-                    route_event_mask_};
+                    route_event_mask_,
+                    foot_path_mask_};
 
   auto const& cmpnt_locs = tt_.component_locations_[cut_cmpnt_from];
   for (auto dep_event_i = bin_begin_idx; dep_event_i < bin_end_idx;
@@ -309,7 +325,7 @@ void customizer::bmc_cut_routing_task(
       bmc_backtrack_and_update_ranks(bmc_j.label_iter_, state, context,
                                  bmc_j.transfers_ + 1, location_idx_t{i}, level,
                                  cell, cut_cmpnt_from, task.atomic_route_ranks_,
-                                 task.atomic_route_event_ranks_);
+                                 task.atomic_route_event_ranks_, task.atomic_foot_path_ranks_);
     }
 
     bmc_journey_bag.clear();
@@ -394,7 +410,8 @@ void customizer::mc_cut_routing_task(
       mc_backtrack_and_update_ranks(
           mc_j.label_iter_, state, context, mc_j.transfers_ + 1,
           location_idx_t{i}, level, cell, cut_cmpnt_from,
-          task.atomic_route_ranks_, task.atomic_route_event_ranks_);
+          task.atomic_route_ranks_, task.atomic_route_event_ranks_,
+          task.atomic_foot_path_ranks_);
     }
 
     mc_journey_bag.clear();
@@ -408,12 +425,13 @@ void customizer::bmc_backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator
                                             bmc_raptor_state const& state,
                                             local_thread_context const& context,
                                             const unsigned k,
-                                            location_idx_t,
+                                            location_idx_t target,
                                             std::uint8_t const level,
                                             cell_idx_t,
                                             component_idx_t,
                                             atomic_ranks_t& atomic_route_ranks,
-                                            atomic_ranks_t& atomic_route_event_ranks) {
+                                            atomic_ranks_t& atomic_route_event_ranks,
+                                            atomic_ranks_t& atomic_foot_path_ranks) {
 
   auto current_label = root_label->label_;
   auto current_k = k;
@@ -426,13 +444,25 @@ void customizer::bmc_backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator
     auto const enter_stop_idx = current_label.enter_stop_idx_;
     auto const exit_stop_idx = current_label.exit_stop_idx_;
 
-
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
+    auto const exit_stp = stop{stop_sequence[exit_stop_idx]};
 
     auto const enter_loc_idx = enter_stp.location_idx();
     auto const enter_loc_view_idx = context.tt_view_.get_view_idx(enter_loc_idx);
+    auto const exit_loc_idx = exit_stp.location_idx();
     utl::verify(enter_loc_view_idx != location_idx_view_t::invalid(),
                "Unmapped location while backtracking");
+
+    if (current_label.is_footpath_ == 1) {
+      const auto& fps_out = tt_.locations_.footpaths_out_[kDefaultProfile][exit_loc_idx];
+      const auto fp_it = std::find_if(fps_out.begin(), fps_out.end(), [target](const auto& fp) {
+        return fp.target() == target;
+      });
+      utl::verify(fp_it != fps_out.end(),
+                 "Footpath not found");
+
+      atomic_foot_path_ranks[static_cast<unsigned long>(std::distance(tt_.locations_.footpaths_out_[kDefaultProfile].data_.begin(), fp_it))].store(level + 1);
+    }
 
 
 
@@ -450,6 +480,7 @@ void customizer::bmc_backtrack_and_update_ranks(bmc_raptor_bag_t::const_iterator
             .labels_[current_label.parent_bag_idx_]
             .label_;
     current_k--;
+    target = enter_loc_idx;
   }
 }
 
@@ -457,12 +488,13 @@ void customizer::mc_backtrack_and_update_ranks(pareto_set<mc_raptor_label>::cons
                                                mc_raptor_state const& state,
                                                local_thread_context const& context,
                                                const unsigned k,
-                                               location_idx_t,
+                                               location_idx_t target,
                                                std::uint8_t const level,
                                                cell_idx_t,
                                                component_idx_t,
                                                atomic_ranks_t& atomic_route_ranks,
-                                               atomic_ranks_t& atomic_route_event_ranks) {
+                                               atomic_ranks_t& atomic_route_event_ranks,
+                                               atomic_ranks_t& atomic_foot_path_ranks) {
 
   auto current_label = *root_label;
   auto current_k = k;
@@ -477,11 +509,25 @@ void customizer::mc_backtrack_and_update_ranks(pareto_set<mc_raptor_label>::cons
 
 
     auto const enter_stp = stop{stop_sequence[enter_stop_idx]};
+    auto const exit_stp = stop{stop_sequence[exit_stop_idx]};
 
     auto const enter_loc_idx = enter_stp.location_idx();
+    auto const exit_loc_idx = exit_stp.location_idx();
+
     auto const enter_loc_view_idx = context.tt_view_.get_view_idx(enter_loc_idx);
     utl::verify(enter_loc_view_idx != location_idx_view_t::invalid(),
                "Unmapped location while backtracking");
+
+    if (current_label.is_footpath_ == 1) {
+      const auto& fps_out = tt_.locations_.footpaths_out_[kDefaultProfile][exit_loc_idx];
+      const auto fp_it = std::find_if(fps_out.begin(), fps_out.end(), [target](const auto& fp) {
+        return fp.target() == target;
+      });
+      utl::verify(fp_it != fps_out.end(),
+                 "Footpath not found");
+
+      atomic_foot_path_ranks[static_cast<unsigned long>(std::distance(tt_.locations_.footpaths_out_[kDefaultProfile].data_.begin(), fp_it))].store(level + 1);
+    }
 
 
 
@@ -497,6 +543,7 @@ void customizer::mc_backtrack_and_update_ranks(pareto_set<mc_raptor_label>::cons
     current_label = state.round_bags_[current_k - 1][to_idx(enter_loc_view_idx)]
                         .els_[current_label.parent_bag_idx_];
     current_k--;
+    target = enter_loc_idx;
   }
 }
 
@@ -565,12 +612,14 @@ void customizer::mark_routes_and_events_from_ranks(
     route_partition const&,
     std::uint8_t const level,
     atomic_ranks_t const& atomic_route_ranks,
-    atomic_ranks_t const& atomic_route_event_ranks) {
+    atomic_ranks_t const& atomic_route_event_ranks,
+    atomic_ranks_t const& foot_path_ranks) {
   auto timer = scoped_timer("marking routes and events that have an updated rank");
 
   // 1. Effectively clear all mark bits
   utl::fill(marked_routes_.blocks_, 0U);
   utl::fill(marked_route_events_.blocks_, 0U);
+  utl::fill(marked_foot_paths_.blocks_, 0U);
 
   for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
     if (atomic_route_ranks[to_idx(route_idx)] == level + 1) {
@@ -590,6 +639,14 @@ void customizer::mark_routes_and_events_from_ranks(
       if (atomic_route_event_ranks[i] == level + 1) {
         marked_route_events_.set(i, true);
       }
+    }
+  }
+
+  utl::verify(foot_path_ranks.size() == marked_foot_paths_.size(), "unexpected dimensions");
+
+  for (auto i=0U; i < foot_path_ranks.size(); ++i) {
+    if (foot_path_ranks[i] == level + 1) {
+      marked_foot_paths_.set(i, true);
     }
   }
 }
@@ -619,6 +676,25 @@ void customizer::materialize_atomic_ranks(atomic_ranks_t const& atomic_route_eve
     out_ranks.add_back_sized(n_ranks);
     for (auto i = 0U; i < n_ranks; ++i) {
       out_ranks.back()[i] = rank_t{atomic_route_event_ranks[from + i]};
+    }
+  }
+}
+
+void customizer::update_cut_component_fps(atomic_ranks_t& fp_ranks, std::uint8_t level) {
+  for (auto component = component_idx_t{0U}; component < tt_.component_locations_.size(); ++component) {
+    const auto& cell_idxs = current_lvl_cells_of_components_[to_idx(component)];
+
+    if (cell_idxs.size() <= 1) {
+      continue;
+    }
+
+    const auto& component_locations = tt_.component_locations_[component];
+    for (const auto loc : component_locations) {
+      const auto fps_from = tt_.locations_.footpaths_out_[kDefaultProfile].bucket_starts_[to_idx(loc)];
+      const auto n_out_fps = tt_.locations_.footpaths_out_[kDefaultProfile][loc].size();
+      for (auto i=0U; i<n_out_fps; ++i) {
+        fp_ranks[fps_from + i].store(level + 1);
+      }
     }
   }
 }

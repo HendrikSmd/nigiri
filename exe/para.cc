@@ -78,11 +78,12 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
   routing::para::bmc_raptor_state state;
   bitvec route_mask = bitvec::max(tt.n_routes());
   bitvec transfer_mask = bitvec::max(tt.n_locations());
+  bitvec fp_mask = bitvec::max(tt.locations_.footpaths_out_[kDefaultProfile].data_.size());
   bitvec destination_mask(tt.n_locations());
   routing::para::timetable_view tt_view(tt, route_mask);
 
   routing::para::bmc_raptor raptor(
-    tt_view, state, destination_mask, {} ,transfer_mask);
+    tt_view, state, destination_mask, {} ,transfer_mask, fp_mask);
 
   const auto start_loc = q.start_.front().target();
   const auto dest_loc = q.destination_.front().target();

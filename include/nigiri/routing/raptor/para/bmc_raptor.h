@@ -23,7 +23,7 @@ struct bmc_raptor {
   bmc_raptor(timetable_view const& tt_view, bmc_raptor_state& state,
              bitvec const& destination_mask,
              vector_map<route_idx_t, std::uint32_t> const& route_events_from,
-             bitvec const& route_event_mask);
+             bitvec const& route_event_mask, bitvec const& footpath_mask);
 
   template <auto dominates>
   static void cleanup_after_footpaths_added(bmc_raptor_bag_t& bag) {
@@ -141,6 +141,7 @@ struct bmc_raptor {
   bitvec const& destination_mask_; // Indexed by source location_idx_t
   bitvec const& route_event_mask_;    // Indexed by source route_idx_t
   vector_map<route_idx_t, std::uint32_t> const& route_events_from_;
+  bitvec const& footpath_mask_; // Indexed by source location_idx_t
   bitset<kMaxDays> const tt_day_mask_;
 };
 
