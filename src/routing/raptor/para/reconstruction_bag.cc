@@ -31,7 +31,7 @@ void reconstruction_bag::decompress(bmc_raptor_bag<bmc_raptor_label> const& roun
     auto const& active_days = label.tdb_;
     active_days.for_each_set_bit([&](size_t const i) {
       labels_.emplace_back(
-        routing_time{static_cast<int>(i * 1440 + label.label_.arrival_)},
+        routing_time{static_cast<int>(i * 1440 + label.label_.arrival_with_transfer_)},
         routing_time{static_cast<int>(i * 1440 + label.label_.departure_)}
       );
     });

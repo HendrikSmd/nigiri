@@ -100,7 +100,6 @@ struct bmc_raptor {
                       [](bmc_journey const& j1, bmc_journey const& j2) {
                         return j1.departure_ < j2.departure_;
                       });
-
     auto const find_entry_in_prev_round =
         [&](unsigned const k, transport const& tr, route_idx_t const route,
             stop_idx_t const from_stop_idx, routing_time const departure)
@@ -137,8 +136,9 @@ struct bmc_raptor {
         if (candidate->departure_ > departure) {
           continue;
         }
-        auto const possible_dep_time =
-            candidate->arrival_ + tt.locations_.transfer_time_[l];
+
+        utl::verify(candidate->departure_ == departure, "");
+        auto const possible_dep_time = candidate->arrival_;
         if (possible_dep_time <= ev_time) {
           return {l_view, stop_idx};
         }
@@ -174,7 +174,6 @@ struct bmc_raptor {
         }
 
         auto tr = transport{t, day_idx_t{traffic_day}};
-
         auto const [from_loc, s] =
             find_entry_in_prev_round(k, tr, r, stop_idx, departure_time);
         if (from_loc != location_idx_view_t::invalid()) {
@@ -194,6 +193,9 @@ struct bmc_raptor {
       auto const& tt = tt_view_.get_source_tt();
       auto const loc = tt_view_.get_source_idx(loc_view);
       for (auto const& r : tt.location_routes_[loc]) {
+        if (!tt_view_.is_in_view(r)) {
+          continue;
+        }
 
         auto const location_seq = tt.route_location_seq_[r];
         for (auto const [i, s] : utl::enumerate(location_seq)) {
@@ -201,7 +203,6 @@ struct bmc_raptor {
           if (stp.location_idx() != loc || i == 0U || !stp.out_allowed()) {
             continue;
           }
-
           auto [from_loc_view, from_stop] =
               get_route_transport(k, departure_time, curr_arrival_time, r,
                                   static_cast<stop_idx_t>(i));
@@ -215,6 +216,7 @@ struct bmc_raptor {
 
     auto const get_legs =
         [&](unsigned const k, location_idx_view_t const loc_idx,
+            bool const is_last,
             routing_time const departure_time,
             routing_time const curr_target_arrival) -> location_idx_view_t {
       auto const& tt = tt_view_.get_source_tt();
@@ -222,7 +224,7 @@ struct bmc_raptor {
       auto const src_loc_idx = tt_view_.get_source_idx(loc_idx);
 
       auto const [from_loc_view_idx, stop_from, route, stop_to] =
-          get_transport(k, loc_idx, departure_time, curr_target_arrival);
+          get_transport(k, loc_idx, departure_time, is_last ? curr_target_arrival : curr_target_arrival - tt.locations_.transfer_time_[src_loc_idx]);
       if (from_loc_view_idx != location_idx_view_t::invalid()) {
         std::forward<Fun>(consume)(stop_from, route, stop_to);
         return from_loc_view_idx;
@@ -237,12 +239,12 @@ struct bmc_raptor {
             get_transport(k, fp_view_from, departure_time,
                           curr_target_arrival - fp.duration());
         if (from_loc_view_idx_fp != location_idx_view_t::invalid()) {
-          std::forward<Fun>(consume)(stop_from, route, stop_to);
+          std::forward<Fun>(consume)(stop_from_fp, route_fp, stop_to_fp);
           return from_loc_view_idx_fp;
         }
       }
 
-      throw utl::fail("reconstruction failed");
+      throw utl::fail("reconstruction failed at {} in round {}: target_time={}, departure={}", loc_idx, k, curr_target_arrival.to_unixtime(tt), departure_time.to_unixtime(tt));
     };
 
     for (auto const& j : to_reconstruct) {
@@ -251,13 +253,13 @@ struct bmc_raptor {
         auto const k = j.used_transports_ - i;
         if (k == j.used_transports_) {
           from_loc_view_idx =
-              get_legs(k, j.target_location_idx_, j.departure_, j.arrival_);
+              get_legs(k, j.target_location_idx_, true, j.departure_, j.arrival_);
         } else {
           auto const label_iter =
               state_.reconstruction_bags_[k][to_idx(from_loc_view_idx)]
                   .scan_begin_;
           from_loc_view_idx =
-              get_legs(k, from_loc_view_idx, label_iter->departure_,
+              get_legs(k, from_loc_view_idx, false, label_iter->departure_,
                        label_iter->arrival_);
         }
       }

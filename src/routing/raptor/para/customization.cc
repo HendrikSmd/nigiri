@@ -56,6 +56,7 @@ void customizer::compute_ranks(route_partition const& partition, vecvec<route_id
     });
 
     std::vector<thread_task> tasks;
+
     for (auto cell_idx = cell_idx_t{0U}; cell_idx < partition.get_num_of_cells_on_level(static_cast<std::uint8_t>(level)); ++cell_idx) {
       auto cut_cmpnt_bin_range_iter = start_times_registry_.cell_cmpnt_search_bins_[to_idx(cell_idx)].cbegin();
       cell_cut_components_[to_idx(cell_idx)].for_each_set_bit([&](uint64_t const idx) {
