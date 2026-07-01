@@ -539,7 +539,7 @@ int main(int argc, char** argv) {
     std::cout << "bmc raptor:" << std::endl;
     auto res_bmc = bmc_raptor_search(tt, q);
     for (const auto j : res_bmc) {
-      std::cout << "dep: " << j.departure_.to_unixtime(tt) << ", arr: " << j.arrival_.to_unixtime(tt) << " transfers: " << j.transfers_ << std::endl;
+      std::cout << "dep: " << j.departure_.to_unixtime(tt) << ", arr: " << j.arrival_.to_unixtime(tt) << " transports: " << j.used_transports_ << std::endl;
     }
   } else if (command == "check-transport-order") {
     auto in_tt = fs::path{};

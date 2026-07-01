@@ -286,27 +286,13 @@ void customizer::bmc_cut_routing_task(
 
   raptor.rounds();
 
-  std::vector<bmc_journey> bmc_journey_bag;
-  cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
-    location_idx_t const destination_loc_idx = location_idx_t{i};
-    location_idx_view_t const destination_loc_view_idx =
-        context.tt_view_.get_view_idx(destination_loc_idx);
-
-    if (destination_loc_view_idx == location_idx_view_t::invalid()) {
-      return;
-    }
-
-    raptor.emplace_relative_journeys_for(destination_loc_view_idx,
-                                         bmc_journey_bag);
-
-    // for (auto const& bmc_j : bmc_journey_bag) {
-    //   bmc_backtrack_and_update_ranks(bmc_j.label_iter_, state, context,
-    //                              bmc_j.transfers_ + 1, location_idx_t{i}, level,
-    //                              cell, cut_cmpnt_from, task.atomic_route_ranks_,
-    //                              task.atomic_route_event_ranks_);
-    // }
-
-    bmc_journey_bag.clear();
+  raptor.reconstruct([&](stop_idx_t from, route_idx_t via, stop_idx_t to) {
+    auto const rank_from = route_event_starts_index_[via];
+    unsigned const dep_route_rank_off = (from * 2);
+    unsigned const arr_route_rank_off = (to * 2) - 1;
+    task.atomic_route_ranks_[to_idx(via)].store(task.level_ + 1);
+    task.atomic_route_event_ranks_[rank_from + dep_route_rank_off].store(task.level_ + 1);
+    task.atomic_route_event_ranks_[rank_from + arr_route_rank_off].store(task.level_ + 1);
   });
 
   context.last_cell_idx_ = cell;

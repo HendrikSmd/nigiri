@@ -1,22 +1,24 @@
 #include "nigiri/routing/raptor/para/bmc_raptor.h"
 
 #include "boost/iostreams/seek.hpp"
+#include "boost/program_options/detail/convert.hpp"
 
 #include "nigiri/loader/register.h"
 
 #include "nigiri/common/linear_lower_bound.h"
+#include "nigiri/routing/raptor/para/reconstruction_bag.h"
 #include "nigiri/routing/raptor/para/routing_time.h"
 #include "nigiri/stop.h"
 #include "nigiri/types.h"
 
-#include "utl/enumerate.h"
 #include "nigiri/routing/raptor/para/timetable_view.h"
+#include "utl/enumerate.h"
 
 namespace nigiri::routing::para {
 
 bool bmc_journey::dominates(bmc_journey const& j1, bmc_journey const& j2) {
   return j1.departure_ >= j2.departure_ && j1.arrival_ <= j2.arrival_ &&
-         j1.transfers_ <= j2.transfers_;
+         j1.used_transports_ <= j2.used_transports_;
 }
 
 bmc_raptor::bmc_raptor(timetable_view const& tt_view,
@@ -30,8 +32,7 @@ bmc_raptor::bmc_raptor(timetable_view const& tt_view,
       route_event_mask_(route_event_mask),
       route_events_from_(route_events_from),
       tt_day_mask_(get_tt_day_mask(tt_view.get_source_tt())) {
-  state_.resize(tt_view.get_n_locations(), tt_view.get_n_routes(),
-                static_cast<unsigned int>(destination_mask_.count()));
+  state_.resize(tt_view.get_n_locations(), tt_view.get_n_routes());
   };
 
 bitset<kMaxDays> bmc_raptor::get_tt_day_mask(timetable const& tt) {
@@ -492,7 +493,8 @@ void bmc_raptor::rounds() {
   }
 }
 
-void bmc_raptor::gather_journeys() {
+void bmc_raptor::gather_journeys(std::vector<pareto_set<journey>>& buffer) {
+  buffer.resize(destination_mask_.count());
   const auto& tt = tt_view_.get_source_tt();
   auto write_idx = 0U;
   destination_mask_.for_each_set_bit([&](uint32_t source_location_idx) {
@@ -539,7 +541,7 @@ void bmc_raptor::gather_journeys() {
 
           routing_time const arr{arrival_day_offset, duration_t{arrival_mam}};
 
-          state_.results_[write_idx].add(
+          buffer[write_idx].add(
               journey{.legs_ = {},
                       .start_time_ = dep.to_unixtime(tt),
                       .dest_time_ = arr.to_unixtime(tt),
@@ -556,11 +558,7 @@ unsigned bmc_raptor::end_k() { return kMaxTransfers + 1U; }
 
 void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx,
                                                std::vector<bmc_journey>& bag) const {
-  constexpr auto dom = [](bmc_journey const& l1, bmc_journey const& l2) {
-    return bmc_journey::dominates(l1, l2);
-  };
-
-  for (auto k = 0U; k != end_k(); ++k) {
+  for (auto k = 1U; k != end_k(); ++k) {
     auto const& round_bag = state_.round_bags_[k][to_idx(loc_idx)];
     if (round_bag.size() == 0) {
       continue;
@@ -573,13 +571,13 @@ void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx
       tdb.for_each_set_bit([&](size_t const i) {
         pareto_utils<bmc_journey>::pareto_add(
             bag,
-            {.arrival_ = routing_time{static_cast<int>(i * 1440 +
-                                                       label_view.label_.arrival_)},
-             .departure_ = routing_time{static_cast<int>(
-                 i * 1440 + label_view.label_.departure_)},
-             .transfers_ = static_cast<std::uint16_t>(k > 0 ? k - 1 : 0U),
-             .label_iter_ = label_it},
-            dom);
+            {
+             .arrival_ = routing_time{static_cast<int>(i * 1440 + label_view.label_.arrival_)},
+             .departure_ = routing_time{static_cast<int>(i * 1440 + label_view.label_.departure_)},
+             .used_transports_ = static_cast<std::uint16_t>(k),
+             .target_location_idx_ = loc_idx
+            },
+            bmc_journey::dominates);
       });
     }
   }

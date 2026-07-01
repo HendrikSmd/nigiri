@@ -7,6 +7,7 @@
 #include "bmc_raptor_bag.h"
 #include "bmc_raptor_label.h"
 #include "bmc_raptor_route_label.h"
+#include "reconstruction_bag.h"
 
 namespace nigiri::routing::para {
 
@@ -16,8 +17,7 @@ using bmc_raptor_route_bag_t = bmc_raptor_bag<bmc_raptor_route_label>;
 struct bmc_raptor_state {
 
   void resize(unsigned n_locations,
-              unsigned n_routes,
-              unsigned n_destinations);
+              unsigned n_routes);
 
   void reset();
 
@@ -25,7 +25,7 @@ struct bmc_raptor_state {
   std::vector<bmc_raptor_bag_t> tmp_bags_;
   simple_flat_matrix<bmc_raptor_bag_t> round_bags_;
 
-  std::vector<pareto_set<journey>> results_;
+  simple_flat_matrix<reconstruction_bag> reconstruction_bags_;
   bitvec station_mark_;
   bitvec prev_station_mark_;
   bitvec route_mark_;
