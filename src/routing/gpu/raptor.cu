@@ -54,7 +54,7 @@ struct pinned_buffer {
 // the low 48 breadcrumb bits are 1s but are only ever read for valid entries.
 // Making it all-ones lets reset_arrivals/next_start_time clear with a single
 // cudaMemset(0xFF) instead of a thrust::fill kernel.
-static constexpr std::uint64_t kInvalidPacked = ~std::uint64_t{0};
+//static constexpr std::uint64_t kInvalidPacked = ~std::uint64_t{0};
 
 #define CUDA_CHECK(code)                                              \
   if ((code) != cudaSuccess) {                                        \

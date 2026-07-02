@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(nigiri)
 
-option(NIGIRI_CUDA "enable CUDA functions" OFF)
+option(NIGIRI_CUDA "enable CUDA functions" ON)
 if (NIGIRI_CUDA)
   set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
@@ -19,16 +19,19 @@ include(cmake/pkg.cmake)
 
 
 # --- GTFS-RT PROTOBUF ---
+# --- GTFS-RT PROTOBUF ---
 add_custom_command(
-      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt/gtfs-realtime.pb.h
-      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt/gtfs-realtime.pb.cc
-      COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:protoc>
-      --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt
-      --proto_path=${CMAKE_CURRENT_SOURCE_DIR}
-      ${CMAKE_CURRENT_SOURCE_DIR}/gtfs-realtime.proto
-      DEPENDS protoc
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gtfs-realtime.proto
-      COMMENT "Generating GTFS RT protocol buffers C++ code"
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt/gtfs-realtime.pb.h
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt/gtfs-realtime.pb.cc
+        # We wrap the command with 'cmake -E env' to force the runtime path down into the subprocess
+        COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=/usr/local/gcc-13.2/lib64:$ENV{LD_LIBRARY_PATH}"
+        ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:protoc>
+        --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt
+        --proto_path=${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/gtfs-realtime.proto
+        DEPENDS protoc
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gtfs-realtime.proto
+        COMMENT "Generating GTFS RT protocol buffers C++ code"
 )
 add_library(gtfsrt ${CMAKE_CURRENT_BINARY_DIR}/generated/gtfsrt/gtfs-realtime.pb.cc)
 target_compile_features(gtfsrt PUBLIC cxx_std_23)
