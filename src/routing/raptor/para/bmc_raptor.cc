@@ -287,7 +287,7 @@ void bmc_raptor::get_earliest_sufficient_transports(
 void bmc_raptor::update_footpaths(unsigned const k) {
   const auto& tt = tt_view_.get_source_tt();
 
-  state_.station_mark_.for_each_set_bit([&](std::uint32_t const i) {
+  state_.prev_station_mark_.for_each_set_bit([&](std::uint32_t const i) {
     auto const& round_bag = state_.round_bags_[k][i];
     location_idx_view_t const location_view_idx{i};
     location_idx_t const source_location_idx =
@@ -551,11 +551,15 @@ void bmc_raptor::rounds() {
       any_marked |= update_route(k, tt_view_.get_source_idx(route_view_idx));
     }
 
+    std::swap(state_.prev_station_mark_, state_.station_mark_);
+    state_.station_mark_.zero_out();
+
     state_.route_mark_.zero_out();
     if (!any_marked) {
       return;
     }
     update_footpaths(k);
+    state_.station_mark_ |= state_.prev_station_mark_;
   }
 }
 
