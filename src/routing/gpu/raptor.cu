@@ -168,6 +168,10 @@ gpu_timetable::gpu_timetable(timetable const& tt)
 
 gpu_timetable::~gpu_timetable() = default;
 
+device_timetable get_device_timetable(gpu_timetable const& gtt) {
+  return gtt.impl_->to_device_timetable();
+}
+
 struct gpu_rt_timetable::impl {
   using rtt = rt_timetable;
 

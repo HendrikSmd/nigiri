@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(nigiri)
 
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
 option(NIGIRI_CUDA "enable CUDA functions" ON)
 if (NIGIRI_CUDA)
   set(CMAKE_CUDA_ARCHITECTURES native)
@@ -146,7 +148,7 @@ configure_file(
 file(GLOB_RECURSE nigiri-test-files test/*.cc)
 add_executable(nigiri-test ${nigiri-test-files})
 target_include_directories(nigiri-test PRIVATE include)
-target_link_libraries(nigiri-test nigiri gmock ianatzdb-res nigiri-generated)
+target_link_libraries(nigiri-test nigiri gmock ianatzdb-res nigiri-generated tbb)
 target_compile_features(nigiri-test PUBLIC cxx_std_23)
 target_compile_options(nigiri-test PRIVATE ${nigiri-compile-options})
 
