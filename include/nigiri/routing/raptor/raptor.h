@@ -120,6 +120,7 @@ struct raptor {
   using algo_stats_t = raptor_stats;
 
   static constexpr bool kUseLowerBounds = true;
+  static constexpr bool kUseSimd = true;
   static constexpr auto const kFwd = (SearchDir == direction::kForward);
   static constexpr auto const kBwd = (SearchDir == direction::kBackward);
   static constexpr auto const kInvalid = kInvalidDelta<SearchDir>;
@@ -436,7 +437,14 @@ private:
     if constexpr (is_para_accelerated(algo_version)) {
       auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
       auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
-      compute_min_lcls_avx512(min_lcls_, rank_store_.partition_.route_to_cell_idx_, g_cell_start, g_cell_dest, n_routes_);
+      if constexpr (kUseSimd) {
+        compute_min_lcls_avx512(min_lcls_, rank_store_.partition_.route_to_cell_idx_, g_cell_start, g_cell_dest, n_routes_);
+      } else {
+        min_lcls_.resize(n_routes_);
+        for (auto r = route_idx_t{0U}; r < n_routes_; ++r) {
+          min_lcls_[to_idx(r)] = std::min(para::LCL(rank_store_.partition_.route_to_cell_idx_[r], g_cell_start), para::LCL(rank_store_.partition_.route_to_cell_idx_[r], g_cell_dest));
+        }
+      }
     }
   }
 
