@@ -90,7 +90,7 @@ TEST(routing, td_start_times) {
                       .duration_ = footpath::kMaxDuration,
                       .transport_mode_id_ = 0U}}}}},
              {}, kMaxTravelTime, location_match_mode::kExact, false, starts,
-             true, 0U, {});
+             true, 0U, {}, bitvec::max(tt.n_routes()));
   std::sort(begin(starts), end(starts),
             [](auto&& a, auto&& b) { return a > b; });
   starts.erase(std::unique(begin(starts), end(starts)), end(starts));

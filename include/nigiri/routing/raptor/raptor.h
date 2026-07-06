@@ -17,6 +17,7 @@
 #include "nigiri/types.h"
 
 #include "nigiri/routing/raptor/para/route_rank_store.h"
+#include "nigiri/routing/raptor/para/lcl.h"
 
 namespace nigiri::routing {
 
@@ -433,17 +434,10 @@ private:
       }
     }
     if constexpr (is_para_accelerated(algo_version)) {
-      min_lcls_.resize(n_routes_);
       auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
       auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
-      for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
-        min_lcls_[to_idx(r_idx)] = std::min(lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_start), lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_dest));
-      }
+      compute_min_lcls_avx512(min_lcls_, rank_store_.partition_.route_to_cell_idx_, g_cell_start, g_cell_dest, n_routes_);
     }
-  }
-
-  static rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
-    return rank_t{g_cell.level_ + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx_.v_ ^ (route_cell.v_ >> g_cell.level_)))};
   }
 
   date::sys_days base() const {
