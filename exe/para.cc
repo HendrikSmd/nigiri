@@ -368,11 +368,12 @@ int main(int argc, char** argv) {
 
     routing::para::customizer customizer{tt};
 
-    vecvec<route_idx_t, rank_t> final_ranks;
-    customizer.compute_ranks(partition, final_ranks);
+    vecvec<route_idx_t, rank_t> final_route_ranks;
+    vecvec<location_idx_t, rank_t> final_fp_ranks;
+    customizer.compute_ranks(partition, final_route_ranks, final_fp_ranks);
 
     routing::para::plain_route_rank_store rank_store;
-    rank_store.digest(tt, std::move(partition), std::move(final_ranks));
+    rank_store.digest(tt, std::move(partition), std::move(final_route_ranks), std::move(final_fp_ranks));
     rank_store.print_summary(std::cout, tt);
     rank_store.write(out);
   } else if (command == "inspect-rank-store") {

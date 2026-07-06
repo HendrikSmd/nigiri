@@ -6,6 +6,7 @@ namespace nigiri::routing::para {
 auto plain_route_rank_store::cista_members() {
   return std::tie(route_ranks_,
                   route_event_ranks_,
+                  fp_ranks_,
                   partition_);
 }
 
@@ -21,6 +22,7 @@ void plain_route_rank_store::print_summary(std::ostream&, timetable const& tt) c
   std::vector<size_t> route_rank_counts(partition_.n_levels_ + 1, 0ULL);
   std::vector<size_t> route_departure_event_rank_counts(partition_.n_levels_ + 1, 0ULL);
   std::vector<size_t> route_arrival_event_rank_counts(partition_.n_levels_ + 1, 0ULL);
+  std::vector<size_t> fp_rank_counts(partition_.n_levels_ + 1, 0ULL);
 
   auto const n_routes = tt.n_routes();
   size_t n_dep_events = 0U;
@@ -48,15 +50,23 @@ void plain_route_rank_store::print_summary(std::ostream&, timetable const& tt) c
     }
   }
 
+  for (auto i=0U; i < fp_ranks_.data_.size(); ++i) {
+    fp_rank_counts[to_idx(fp_ranks_.data_[i])]++;
+  }
+
   std::cout << "Counts per rank: " << std::endl;
   for (size_t rank = 0U; rank <= partition_.n_levels_; ++rank) {
     std::cout << "  rank=" << std::left << std::setw(10) << rank << ": " << route_rank_counts[rank] << "/" << n_routes << " routes, "
     << route_departure_event_rank_counts[rank] << "/" << n_dep_events << " departure events, "
-    << route_arrival_event_rank_counts[rank] << "/" << n_arr_events << " arrival events" << std::endl;
+    << route_arrival_event_rank_counts[rank] << "/" << n_arr_events << " arrival events, "
+    << fp_rank_counts[rank] << "/" << fp_ranks_.data_.size() << " footpaths" << std::endl;
   }
 }
 
-void plain_route_rank_store::digest(timetable const& tt, route_partition partition, vecvec<route_idx_t, rank_t> route_event_ranks) {
+void plain_route_rank_store::digest(timetable const& tt,
+                                    route_partition partition,
+                                    vecvec<route_idx_t, rank_t> route_event_ranks,
+                                    vecvec<location_idx_t, rank_t> fp_ranks) {
   route_ranks_.clear();
   route_ranks_.resize(tt.n_routes(), rank_t{0U});
 
@@ -69,6 +79,7 @@ void plain_route_rank_store::digest(timetable const& tt, route_partition partiti
   }
 
   route_event_ranks_ = std::move(route_event_ranks);
+  fp_ranks_ = std::move(fp_ranks);
   partition_ = std::move(partition);
 }
 

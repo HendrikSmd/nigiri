@@ -29,7 +29,9 @@ bool no_bits_set_in(std::vector<bitvec> const& bitvecs) {
 customizer::customizer(timetable const& tt) :
   tt_(tt) {}
 
-void customizer::compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks) {
+void customizer::compute_ranks(route_partition const& partition,
+                               vecvec<route_idx_t, rank_t>& out_route_event_ranks,
+                               vecvec<location_idx_t, rank_t>& out_fp_ranks) {
   log(log_lvl::info, "customization", "on timetable from {} to {}",
     tt_.external_interval().from_,
     tt_.external_interval().to_
@@ -99,7 +101,7 @@ void customizer::compute_ranks(route_partition const& partition, vecvec<route_id
       break;
     }
   }
-  materialize_atomic_ranks(atomic_route_event_ranks, out_ranks);
+  materialize_atomic_ranks(atomic_route_event_ranks, atomic_fp_ranks, out_route_event_ranks, out_fp_ranks);
 }
 
 void customizer::log_progress(std::vector<std::atomic<size_t>> const& cell_progress) const {
@@ -664,18 +666,31 @@ void customizer::compute_route_event_ranks_index() {
 }
 
 void customizer::materialize_atomic_ranks(atomic_ranks_t const& atomic_route_event_ranks,
-                                          vecvec<route_idx_t, rank_t>& out_ranks) {
+                                          atomic_ranks_t const& atomic_fp_ranks,
+                                          vecvec<route_idx_t, rank_t>& out_route_event_ranks,
+                                          vecvec<location_idx_t, rank_t>& out_fp_ranks) {
   auto timer = scoped_timer("materializing atomic ranks");
   utl::verify(route_event_starts_index_.size() == tt_.n_routes() + 1, "index has wrong dimensions");
+  utl::verify(atomic_fp_ranks.size() == tt_.locations_.footpaths_out_[kDefaultProfile].data_.size(), "fps have wrong dimensions");
 
-  out_ranks.clear();
+  out_route_event_ranks.clear();
   for (auto route_idx = route_idx_t{0U}; route_idx < tt_.n_routes(); ++route_idx) {
     const auto from = route_event_starts_index_[route_idx];
     const auto to = route_event_starts_index_[route_idx + 1];
     const auto n_ranks = to - from;
-    out_ranks.add_back_sized(n_ranks);
+    out_route_event_ranks.add_back_sized(n_ranks);
     for (auto i = 0U; i < n_ranks; ++i) {
-      out_ranks.back()[i] = rank_t{atomic_route_event_ranks[from + i]};
+      out_route_event_ranks.back()[i] = rank_t{atomic_route_event_ranks[from + i]};
+    }
+  }
+
+  out_fp_ranks.clear();
+  for (auto loc_idx = location_idx_t{0U}; loc_idx < tt_.n_locations(); ++loc_idx) {
+    const auto n_fps = tt_.locations_.footpaths_out_[kDefaultProfile][loc_idx].size();
+    out_fp_ranks.add_back_sized(n_fps);
+    const auto fps_from = tt_.locations_.footpaths_out_[kDefaultProfile].bucket_starts_[to_idx(loc_idx)];
+    for (auto i = 0U; i < n_fps; ++i) {
+      out_fp_ranks.back()[i] = rank_t{atomic_fp_ranks[fps_from + i]};
     }
   }
 }

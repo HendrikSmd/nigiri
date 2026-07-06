@@ -30,10 +30,14 @@ struct plain_route_rank_store {
   static cista::wrapped<plain_route_rank_store> read(std::filesystem::path const&);
   void                                          write(std::filesystem::path const&) const;
   void                                          print_summary(std::ostream& out, timetable const& tt) const;
-  void                                          digest(timetable const& tt, route_partition partition, vecvec<route_idx_t, rank_t> route_event_ranks);
+  void                                          digest(timetable const& tt,
+                                                       route_partition partition,
+                                                       vecvec<route_idx_t, rank_t> route_event_ranks,
+                                                       vecvec<location_idx_t, rank_t> fp_ranks);
 
   vector_map<route_idx_t, rank_t> route_ranks_;
   vecvec<route_idx_t, rank_t> route_event_ranks_;
+  vecvec<location_idx_t, rank_t> fp_ranks_;
   route_partition partition_;
 };
 

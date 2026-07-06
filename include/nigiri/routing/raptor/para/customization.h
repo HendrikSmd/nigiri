@@ -58,7 +58,7 @@ struct customizer {
 
   customizer(timetable const& tt);
 
-  void compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks);
+  void compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks, vecvec<location_idx_t, rank_t>& out_fp_ranks);
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
   void initialize_cut_stops(route_partition const& p);
@@ -99,7 +99,9 @@ struct customizer {
                                          atomic_ranks_t const& foot_path_ranks);
 
   void materialize_atomic_ranks(atomic_ranks_t const& atomic_route_event_ranks,
-                                vecvec<route_idx_t, rank_t>& out_ranks);
+                                atomic_ranks_t const& atomic_fp_ranks,
+                                vecvec<route_idx_t, rank_t>& out_ranks,
+                                vecvec<location_idx_t, rank_t>& out_fp_ranks);
 
   void compute_route_event_ranks_index();
   void update_cut_component_fps(atomic_ranks_t& fp_ranks, std::uint8_t level);
