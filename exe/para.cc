@@ -26,10 +26,23 @@
 
 #include "date/date.h"
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
 namespace fs = std::filesystem;
 namespace bpo = boost::program_options;
 using namespace nigiri;
 using namespace date;
+
+void print_memory_usage() {
+#ifndef _WIN32
+  auto r = rusage{};
+  getrusage(RUSAGE_SELF, &r);
+  std::cout << "\n--- memory usage ---\nrusage.ru_maxrss: "
+            << static_cast<double>(r.ru_maxrss) / (1024 * 1024) << " GiB\n";
+#endif
+}
 
 struct sub_command {
   std::string_view literal;
@@ -368,12 +381,18 @@ int main(int argc, char** argv) {
     routing::para::customizer customizer{tt};
 
     vecvec<route_idx_t, rank_t> final_ranks;
+    auto start = std::chrono::high_resolution_clock::now();
     customizer.compute_ranks(partition, final_ranks);
 
     routing::para::plain_route_rank_store rank_store;
     rank_store.digest(tt, std::move(partition), std::move(final_ranks));
     rank_store.print_summary(std::cout, tt);
     rank_store.write(out);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << std::endl << std::format("Execution Time: {:%H:%M:%S}\n", end - start);
+#ifndef _WIN32
+    print_memory_usage();
+#endif
   } else if (command == "inspect-rank-store") {
     auto in_store = fs::path{};
     auto in_tt = fs::path{};
