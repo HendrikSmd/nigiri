@@ -23,7 +23,7 @@ device_timetable get_device_timetable(gpu_timetable const& gtt);
 struct get_transports_task {
   std::uint32_t route_idx_;
   std::uint16_t stop_idx_;
-  device_route_label<64> l_;
+  arrival_label<64> l_;
 };
 
 struct count_consumer {
@@ -84,22 +84,22 @@ __global__ void write_kernel(
       consumer);
 }
 
-std::vector<route_label_by_value<64>> get_earliest_sufficient_transports_gpu(
+std::vector<route_label<64>> get_earliest_sufficient_transports_gpu(
     timetable const& tt,
     gpu_timetable const& gtt,
-    simple_flat_matrix<std::vector<route_label<64>>> const& M,
+    simple_flat_matrix<std::vector<arrival_label<64>>> const& M,
     size_t const k,
     std::vector<route_idx_t> const& R) {
   // 1. Flatten the inputs into tasks
   std::vector<get_transports_task> h_tasks;
   for (auto const r : R) {
     auto const seq = tt.route_location_seq_[r];
-    for (std::uint16_t s = 0; s < seq.size(); ++s) {
+    for (std::uint16_t s = 0; s < seq.size()-1; ++s) {
       stop const s_idx = stop{seq[s]};
       location_idx_t const l = s_idx.location_idx();
       auto const& labels = M[k][to_idx(l)];
       for (auto const& lbl : labels) {
-        device_route_label<64> dl{lbl.arrival_, lbl.arrival_with_transfer_, lbl.departure_, lbl.active_days_};
+        arrival_label<64> dl{lbl.arrival_, lbl.arrival_with_transfer_, lbl.departure_, lbl.active_days_};
         h_tasks.push_back({static_cast<std::uint32_t>(to_idx(r)), s, dl});
       }
     }
@@ -162,11 +162,11 @@ std::vector<route_label_by_value<64>> get_earliest_sufficient_transports_gpu(
   thrust::copy(d_out_labels.begin(), d_out_labels.end(), h_out_labels.begin());
 
   // Convert back to CPU format route_label_by_value
-  std::vector<route_label_by_value<64>> result(total_output_size);
+  std::vector<route_label<64>> result(total_output_size);
   for (int i = 0; i < total_output_size; ++i) {
-    result[i].arrival_ = h_out_labels[i].arrival_;
-    result[i].arrival_with_transfer_ = h_out_labels[i].arrival_with_transfer_;
     result[i].departure_ = h_out_labels[i].departure_;
+    result[i].transport_day_offset_ = h_out_labels[i].transport_day_offset_;
+    result[i].transport_idx_ = h_out_labels[i].transport_idx_;
     result[i].active_days_ = h_out_labels[i].active_days_;
   }
 

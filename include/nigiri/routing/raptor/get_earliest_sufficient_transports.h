@@ -100,7 +100,7 @@ CISTA_CUDA_COMPAT void get_earliest_sufficient_transports(TimetableType const& t
 
       auto const matches = to_serve_tdb & truncated_aligned_transport_tdb;
       if (matches.any()) {
-        consume({l.arrival_, l.arrival_with_transfer_, l.departure_, matches});
+        consume({l.departure_, static_cast<int16_t>(net_shift_right), to_idx(transport), matches});
         to_serve_tdb &= ~matches;
       }
     }

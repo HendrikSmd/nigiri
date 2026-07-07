@@ -1,3 +1,7 @@
+#include <deque>
+#include <fstream>
+#include <sstream>
+
 #include "gtest/gtest.h"
 
 #include "nigiri/loader/hrd/load_timetable.h"
@@ -96,7 +100,7 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
 
   // We set up a simple_flat_matrix with 1 row (N=1) and H = tt.n_locations()
   auto const n_locations = tt.n_locations();
-  auto M = simple_flat_matrix<std::vector<routing::route_label<64>>>{1U, n_locations};
+  auto M = simple_flat_matrix<std::vector<routing::arrival_label<64>>>{1U, n_locations};
 
   // Find location "A" ("0000001")
   auto const loc_a = tt.locations_.location_id_to_idx_.at({"0000001", src});
@@ -109,7 +113,7 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
   // departure = 05:00 (300 minutes after midnight)
   // arrival = 07:00 (420 minutes after midnight)
   // arrival_with_transfer = 07:00
-  routing::route_label<64> l{
+  routing::arrival_label<64> l{
       .arrival_ = 420,
       .arrival_with_transfer_ = 420,
       .departure_ = 300,
@@ -124,10 +128,10 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
   }
 
   // 1. Run CPU version to collect expected outputs
-  std::vector<routing::route_label_by_value<64>> expected_outputs;
+  std::vector<routing::route_label<64>> expected_outputs;
   for (auto const r : R) {
     auto const seq = tt.route_location_seq_[r];
-    for (std::uint16_t s = 0U; s < seq.size(); ++s) {
+    for (std::uint16_t s = 0U; s < seq.size() - 1; ++s) {
       stop const s_idx = stop{seq[s]};
       if (s_idx.location_idx() == loc_a) {
         routing::get_earliest_sufficient_transports<64>(
@@ -148,9 +152,103 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
   // 3. Compare sizes and contents
   ASSERT_EQ(expected_outputs.size(), gpu_outputs.size());
   for (size_t i = 0; i < expected_outputs.size(); ++i) {
-    EXPECT_EQ(expected_outputs[i].arrival_, gpu_outputs[i].arrival_);
-    EXPECT_EQ(expected_outputs[i].arrival_with_transfer_, gpu_outputs[i].arrival_with_transfer_);
     EXPECT_EQ(expected_outputs[i].departure_, gpu_outputs[i].departure_);
+    EXPECT_EQ(expected_outputs[i].transport_day_offset_, gpu_outputs[i].transport_day_offset_);
+    EXPECT_EQ(expected_outputs[i].transport_idx_, gpu_outputs[i].transport_idx_);
+    EXPECT_EQ(expected_outputs[i].active_days_, gpu_outputs[i].active_days_);
+  }
+}
+
+TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
+  constexpr auto const src = source_idx_t{0U};
+
+  auto tt = timetable{};
+  tt.date_range_ = full_period();
+  load_timetable(src, loader::hrd::hrd_5_20_26, files_abc(), tt);
+  finalize(tt);
+
+  auto const gpu_tt = ngpu::gpu_timetable{tt};
+
+  std::vector<route_idx_t> R;
+  std::deque<cista::bitset<64>> active_days_storage;
+
+  std::string const dump_path = "test/test_data/route-dump.txt";
+  std::ifstream f(dump_path);
+  ASSERT_TRUE(f.is_open()) << "Failed to open " << dump_path;
+
+  std::string line;
+  if (std::getline(f, line)) {
+    std::stringstream ss(line);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+      if (token.empty()) continue;
+      auto const r_val = static_cast<std::uint32_t>(std::stoul(token));
+      if (r_val < tt.n_routes()) {
+        R.push_back(route_idx_t{r_val});
+      }
+    }
+  }
+
+  simple_flat_matrix<std::vector<routing::arrival_label<64>>> M{1U, tt.n_locations()};
+
+  while (std::getline(f, line)) {
+    if (line.empty()) continue;
+    std::size_t pos1 = line.find(';');
+    if (pos1 == std::string::npos) continue;
+    std::size_t pos2 = line.find(';', pos1 + 1);
+    if (pos2 == std::string::npos) continue;
+    std::size_t pos3 = line.find(';', pos2 + 1);
+    if (pos3 == std::string::npos) continue;
+    std::size_t pos4 = line.find(';', pos3 + 1);
+    if (pos4 == std::string::npos) continue;
+
+    auto const loc_idx_val = static_cast<std::uint32_t>(std::stoul(line.substr(0, pos1)));
+    if (loc_idx_val >= tt.n_locations()) {
+      continue;
+    }
+
+    auto const arrival = static_cast<std::uint16_t>(std::stoul(line.substr(pos1 + 1, pos2 - pos1 - 1)));
+    auto const arrival_with_transfer = static_cast<std::uint16_t>(std::stoul(line.substr(pos2 + 1, pos3 - pos2 - 1)));
+    auto const departure = static_cast<std::uint16_t>(std::stoul(line.substr(pos3 + 1, pos4 - pos3 - 1)));
+    
+    std::string_view bitfield_str = std::string_view(line).substr(pos4 + 1);
+    
+    routing::arrival_label<64> lbl{
+      .arrival_ = arrival,
+      .arrival_with_transfer_ = arrival_with_transfer,
+      .departure_ = departure,
+      .active_days_ = cista::bitset<64>{bitfield_str}
+    };
+
+    M[0U][loc_idx_val].push_back(lbl);
+  }
+
+  std::vector<routing::route_label<64>> expected_outputs;
+  for (auto const r : R) {
+    auto const seq = tt.route_location_seq_[r];
+    for (std::uint16_t s = 0U; s < seq.size() - 1; ++s) {
+      stop const s_idx = stop{seq[s]};
+      location_idx_t const l = s_idx.location_idx();
+      for (auto const& lbl : M[0U][to_idx(l)]) {
+        routing::get_earliest_sufficient_transports<64>(
+            tt,
+            lbl,
+            r,
+            s,
+            [&](routing::route_label<64> const& out) {
+              expected_outputs.push_back(out);
+            });
+      }
+    }
+  }
+
+  auto const gpu_outputs = ngpu::get_earliest_sufficient_transports_gpu(tt, gpu_tt, M, 0U, R);
+
+  ASSERT_EQ(expected_outputs.size(), gpu_outputs.size());
+  for (size_t i = 0; i < expected_outputs.size(); ++i) {
+    EXPECT_EQ(expected_outputs[i].departure_, gpu_outputs[i].departure_);
+    EXPECT_EQ(expected_outputs[i].transport_day_offset_, gpu_outputs[i].transport_day_offset_);
+    EXPECT_EQ(expected_outputs[i].transport_idx_, gpu_outputs[i].transport_idx_);
     EXPECT_EQ(expected_outputs[i].active_days_, gpu_outputs[i].active_days_);
   }
 }
