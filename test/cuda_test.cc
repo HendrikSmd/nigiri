@@ -285,8 +285,8 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
             << std::chrono::duration_cast<std::chrono::microseconds>(end_gpu - start_gpu).count() / 1000.0
             << "ms" << std::endl;
 
-  //ASSERT_EQ(expected_outputs.size(), gpu_outputs.size());v
-  for (size_t i = 11200; i < 11250; ++i) {
+  ASSERT_EQ(expected_outputs.size(), gpu_outputs.size());
+  for (size_t i = 0; i < expected_outputs.size(); ++i) {
     EXPECT_EQ(expected_outputs[i].departure_, gpu_outputs[i].departure_) << "departure mismatch at index " << i;
     EXPECT_EQ(expected_outputs[i].transport_day_offset_, gpu_outputs[i].transport_day_offset_);
     EXPECT_EQ(expected_outputs[i].transport_idx_, gpu_outputs[i].transport_idx_);
