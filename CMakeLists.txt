@@ -87,6 +87,7 @@ elseif (NOT MSVC)
         -Wno-maybe-uninitialized)
 endif ()
 
+find_package(TBB)
 
 # --- LIB ---
 file(GLOB_RECURSE nigiri-files src/*.cc)
@@ -115,6 +116,7 @@ target_link_libraries(
   PRIVATE
   boost-iostreams
   zlibstatic
+  TBB::tbb
 )
 target_compile_features(nigiri PUBLIC cxx_std_23)
 target_compile_options(nigiri PRIVATE ${nigiri-compile-options})

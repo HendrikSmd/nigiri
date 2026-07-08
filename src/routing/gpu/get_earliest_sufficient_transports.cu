@@ -112,10 +112,12 @@ std::vector<route_label<64>> get_earliest_sufficient_transports_gpu(
   // 2. Upload tasks to the GPU
   thrust::device_vector<get_transports_task> d_tasks = h_tasks;
   thrust::device_vector<int> d_counts(h_tasks.size());
+  std::cout << "Created " << d_tasks.size() << " tasks." << std::endl;
 
   // 3. Launch the counting kernel
   int const threads_per_block = 256;
   int const blocks = (h_tasks.size() + threads_per_block - 1) / threads_per_block;
+  std::cout << blocks << " blocks" << std::endl;
 
   device_timetable const d_tt = get_device_timetable(gtt);
 
@@ -138,7 +140,7 @@ std::vector<route_label<64>> get_earliest_sufficient_transports_gpu(
   cudaMemcpy(&last_count, thrust::raw_pointer_cast(d_counts.data()) + h_tasks.size() - 1, sizeof(int), cudaMemcpyDeviceToHost);
   cudaMemcpy(&last_offset, thrust::raw_pointer_cast(d_offsets.data()) + h_tasks.size() - 1, sizeof(int), cudaMemcpyDeviceToHost);
   int const total_output_size = last_offset + last_count;
-
+  std::cout << "Total output size computed " << total_output_size << std::endl;
   if (total_output_size == 0) {
     return {};
   }

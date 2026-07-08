@@ -149,6 +149,9 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
   // 2. Run GPU version
   auto const gpu_outputs = ngpu::get_earliest_sufficient_transports_gpu(tt, gpu_tt, M, 0U, R);
 
+  for (const auto& exp : expected_outputs) {
+    std::cout << exp.departure_ << " " << exp.transport_idx_ << " " << exp.active_days_ << std::endl;
+  }
   // 3. Compare sizes and contents
   ASSERT_EQ(expected_outputs.size(), gpu_outputs.size());
   for (size_t i = 0; i < expected_outputs.size(); ++i) {
@@ -160,12 +163,8 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_test) {
 }
 
 TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
-  constexpr auto const src = source_idx_t{0U};
-
-  auto tt = timetable{};
-  tt.date_range_ = full_period();
-  load_timetable(src, loader::hrd::hrd_5_20_26, files_abc(), tt);
-  finalize(tt);
+  auto tt = *timetable::read("timetables/tt-swiss-gouda.bin");
+  tt.resolve();
 
   auto const gpu_tt = ngpu::gpu_timetable{tt};
 
@@ -188,9 +187,11 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
       }
     }
   }
-
+  std::cout << "Read " << tt.n_locations() << " locations" << std::endl;
+  std::cout << "Read " << tt.n_routes() << " locations" << std::endl;
   simple_flat_matrix<std::vector<routing::arrival_label<64>>> M{1U, tt.n_locations()};
 
+  size_t n_labels = 0U;
   while (std::getline(f, line)) {
     if (line.empty()) continue;
     std::size_t pos1 = line.find(';');
@@ -207,9 +208,9 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
       continue;
     }
 
-    auto const arrival = static_cast<std::uint16_t>(std::stoul(line.substr(pos1 + 1, pos2 - pos1 - 1)));
-    auto const arrival_with_transfer = static_cast<std::uint16_t>(std::stoul(line.substr(pos2 + 1, pos3 - pos2 - 1)));
-    auto const departure = static_cast<std::uint16_t>(std::stoul(line.substr(pos3 + 1, pos4 - pos3 - 1)));
+    auto const departure = static_cast<std::uint16_t>(std::stoul(line.substr(pos1 + 1, pos2 - pos1 - 1)));
+    auto const arrival = static_cast<std::uint16_t>(std::stoul(line.substr(pos2 + 1, pos3 - pos2 - 1)));
+    auto const arrival_with_transfer = static_cast<std::uint16_t>(std::stoul(line.substr(pos3 + 1, pos4 - pos3 - 1)));
     
     std::string_view bitfield_str = std::string_view(line).substr(pos4 + 1);
     
@@ -220,24 +221,31 @@ TEST(nigiri_cuda, get_earliest_sufficient_transports_gpu_vs_sequential) {
       .active_days_ = cista::bitset<64>{bitfield_str}
     };
 
+    n_labels++;
     M[0U][loc_idx_val].push_back(lbl);
   }
+  std::cout << "Read " << n_labels << " labels" << std::endl;
+  std::cout << "Read " << R.size() << " marked routes" << std::endl;
 
   std::vector<routing::route_label<64>> expected_outputs;
-  for (auto const r : R) {
-    auto const seq = tt.route_location_seq_[r];
-    for (std::uint16_t s = 0U; s < seq.size() - 1; ++s) {
-      stop const s_idx = stop{seq[s]};
-      location_idx_t const l = s_idx.location_idx();
-      for (auto const& lbl : M[0U][to_idx(l)]) {
-        routing::get_earliest_sufficient_transports<64>(
-            tt,
-            lbl,
-            r,
-            s,
-            [&](routing::route_label<64> const& out) {
-              expected_outputs.push_back(out);
-            });
+  {
+    auto timer = scoped_timer("cpu");
+
+    for (auto const r : R) {
+      auto const seq = tt.route_location_seq_[r];
+      for (std::uint16_t s = 0U; s < seq.size() - 1; ++s) {
+        stop const s_idx = stop{seq[s]};
+        location_idx_t const l = s_idx.location_idx();
+        for (auto const& lbl : M[0U][to_idx(l)]) {
+          routing::get_earliest_sufficient_transports<64>(
+              tt,
+              lbl,
+              r,
+              s,
+              [&](routing::route_label<64> const& out) {
+                expected_outputs.push_back(out);
+              });
+        }
       }
     }
   }
