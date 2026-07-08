@@ -28,7 +28,7 @@ struct get_transports_task {
 
 struct count_consumer {
   mutable int count_ = 0;
-  __device__ void operator()(device_route_label<64> const&) const {
+  __device__ void operator()(route_label<64> const&) const {
     count_++;
   }
 };
@@ -55,9 +55,9 @@ __global__ void count_kernel(
 }
 
 struct write_consumer {
-  device_route_label<64>* out_;
+  route_label<64>* out_;
   mutable int offset_;
-  __device__ void operator()(device_route_label<64> const& out_l) const {
+  __device__ void operator()(route_label<64> const& out_l) const {
     out_[offset_++] = out_l;
   }
 };
@@ -67,7 +67,7 @@ __global__ void write_kernel(
     get_transports_task const* tasks,
     int const num_tasks,
     int const* offsets,
-    device_route_label<64>* out_labels) {
+    route_label<64>* out_labels) {
   int const idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_tasks) return;
 
@@ -146,7 +146,7 @@ std::vector<route_label<64>> get_earliest_sufficient_transports_gpu(
   }
 
   // Allocate output buffer on GPU
-  thrust::device_vector<device_route_label<64>> d_out_labels(total_output_size);
+  thrust::device_vector<route_label<64>> d_out_labels(total_output_size);
 
   // 5. Launch the writing kernel
   write_kernel<<<blocks, threads_per_block>>>(
@@ -160,7 +160,7 @@ std::vector<route_label<64>> get_earliest_sufficient_transports_gpu(
   CUDA_CHECK(cudaGetLastError());
 
   // 6. Copy output back to CPU
-  std::vector<device_route_label<64>> h_out_labels(total_output_size);
+  std::vector<route_label<64>> h_out_labels(total_output_size);
   thrust::copy(d_out_labels.begin(), d_out_labels.end(), h_out_labels.begin());
 
   // Convert back to CPU format route_label_by_value

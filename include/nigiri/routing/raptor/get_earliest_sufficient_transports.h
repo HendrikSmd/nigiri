@@ -149,7 +149,7 @@ CISTA_CUDA_COMPAT void get_earliest_sufficient_transports(TimetableType const& t
                                         route_idx_t route_idx,
                                         unsigned short stop_idx,
                                         Fun&& consume) {
-  consume({l.departure_, 0, 0, l.active_days_});
+  //printf("Start get earliest sufficient transport departure=%u, arr_with_transfer=%u\n", l.departure_, l.arrival_with_transfer_);
   auto const dep_event_times =
       tt.event_times_at_stop(route_idx, stop_idx, event_type::kDep);
 
@@ -159,6 +159,8 @@ CISTA_CUDA_COMPAT void get_earliest_sufficient_transports(TimetableType const& t
   auto const arr_days_after_dep =
       static_cast<std::uint16_t>(arr_as_delta.days());
 
+  //printf("arr_days_after_dep=%u\n", arr_days_after_dep);
+
   auto const seek_first_day = [&]() {
     return linear_lb(
         dep_event_times.begin(), dep_event_times.end(), arr_as_delta.mam(),
@@ -166,44 +168,57 @@ CISTA_CUDA_COMPAT void get_earliest_sufficient_transports(TimetableType const& t
   };
 
   auto to_serve_tdb = l.active_days_;
+  //printf("To serve %s\n\n", to_serve_tdb.to_string().c_str());
   for (auto days_after_dep = arr_days_after_dep;
        days_after_dep < n_days_to_iterate; ++days_after_dep) {
+    //printf("days_after_dep=%u\n", days_after_dep);
     if (bitset_none(to_serve_tdb)) {
+      //printf("to serve does not have any bits -> nothing to do");
       return;
     }
 
-    auto const time_range_to_scan =
-        it_range{days_after_dep == arr_days_after_dep ? seek_first_day()
-                                                      : dep_event_times.begin(),
-                 dep_event_times.end()};
+    auto begin_it = dep_event_times.begin();
+    if (days_after_dep == arr_days_after_dep) {
+      begin_it = seek_first_day();
+    }
 
-    if (time_range_to_scan.empty()) {
+    if (begin_it == dep_event_times.end()) {
+      //printf("time range empty -> next day");
       continue;
     }
 
-    auto const base = static_cast<unsigned>(&*time_range_to_scan.begin_ -
+    auto const base = static_cast<unsigned>(&*begin_it -
                                             dep_event_times.data());
-    for (auto i = 0U; i < time_range_to_scan.size(); ++i) {
-      const auto event_time = time_range_to_scan[i];
+    // printf("time range to scan: %lu\n", time_range_to_scan.size());
+    for (auto it = begin_it; it != dep_event_times.end(); ++it) {
+      const auto event_time = *it;
+      //printf("Event time %u\n", event_time.mam());
       if (bitset_none(to_serve_tdb)) {
+        //printf("to serve does not have any bits -> nothing to do");
         return;
       }
-
       auto const travel_time_lb =
           event_time.mam() + 1440 * days_after_dep - l.departure_;
-      if (travel_time_lb > kMaxTravelTime.count()) {
+#ifdef __CUDA_ARCH__
+      if (travel_time_lb > kMaxCudaTravelTime) {
         return;
       }
+#else
+      if (travel_time_lb > kMaxTravelTime.count()) {
+        //printf("Travel time will be higer than maxTravelTime -> stop search \n");
+        return;
+      }
+#endif
 
       auto const event_day_offset = event_time.days();
       
       // We resolve the route transport range's base index
 #ifdef __CUDA_ARCH__
       auto const route_transports = tt.route_transport_ranges_[route_idx];
-      auto const transport = transport_idx_t{route_transports.from_ + base + i};
+      auto const transport = transport_idx_t{route_transports.from_ + base + std::distance(begin_it, it)};
 #else
       auto const transport =
-          tt.route_transport_ranges_[route_idx][base + i];
+          tt.route_transport_ranges_[route_idx][base + std::distance(begin_it, it)];
 #endif
 
       int const net_shift_right = days_after_dep - event_day_offset;
@@ -217,15 +232,23 @@ CISTA_CUDA_COMPAT void get_earliest_sufficient_transports(TimetableType const& t
 
       cista::bitset<Size> truncated_aligned_transport_tdb;
       truncate_to(aligned_transport_tdb, truncated_aligned_transport_tdb);
-
+      //printf("Aligned event bitfield %s\n", truncated_aligned_transport_tdb.to_string().c_str());
       if (bitset_none(truncated_aligned_transport_tdb)) {
         continue;
       }
 
       auto const matches = bitset_and(to_serve_tdb, truncated_aligned_transport_tdb);
       if (bitset_any(matches)) {
-        consume({l.departure_, static_cast<int16_t>(net_shift_right), to_idx(transport), matches});
+        //printf("Found match\n");
+        auto const label = route_label<64>{
+          l.departure_,
+          static_cast<int16_t>(net_shift_right),
+          to_idx(transport),
+          matches
+        };
+        consume(label);
         bitset_and_not(to_serve_tdb, matches);
+        //printf("It remains to serve: %s\n", to_serve_tdb.to_string().c_str());
       }
     }
   }

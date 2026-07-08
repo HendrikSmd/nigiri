@@ -28,6 +28,7 @@
 #include "cista/containers/vecvec.h"
 #include "cista/reflection/printable.h"
 #include "cista/strong.h"
+#include "cista/cuda_check.h"
 
 #include "utl/helpers/algorithm.h"
 
@@ -554,41 +555,45 @@ inline std::ostream& operator<<(std::ostream& out,
 namespace nigiri {
 
 struct delta {
-  explicit delta(duration_t const d)
+  explicit CISTA_CUDA_COMPAT delta(duration_t const d)
       : days_{static_cast<std::uint16_t>(d.count() / 1440)},
         mam_{static_cast<std::uint16_t>(d.count() % 1440)} {
+#ifndef __CUDA_ARCH__
     assert(d.count() >= 0);
+#endif
   }
 
-  explicit delta(std::uint16_t const minutes)
+  explicit CISTA_CUDA_COMPAT delta(std::uint16_t const minutes)
       : days_{static_cast<std::uint16_t>(minutes / 1440U)},
         mam_{static_cast<std::uint16_t>(minutes % 1440U)} {}
 
-  constexpr delta(std::uint16_t const day, std::uint16_t const mam)
+  constexpr CISTA_CUDA_COMPAT delta(std::uint16_t const day, std::uint16_t const mam)
       : days_{day}, mam_{mam} {}
 
-  delta(date::days const day_offset, duration_t const minutes_offset)
+  CISTA_CUDA_COMPAT delta(date::days const day_offset, duration_t const minutes_offset)
       : days_{static_cast<std::uint16_t>(day_offset.count() + 1)},
         mam_{static_cast<std::uint16_t>(minutes_offset.count() + 720)} {
+#ifndef __CUDA_ARCH__
     assert(day_offset.count() >= -1);
     assert(day_offset.count() < 30);
     assert(minutes_offset.count() >= -720);
     assert(minutes_offset.count() < 1320);
+#endif
   }
 
-  std::uint16_t value() const {
+  CISTA_CUDA_COMPAT std::uint16_t value() const {
     return *reinterpret_cast<std::uint16_t const*>(this);
   }
 
-  constexpr std::int16_t days() const { return days_; }
-  constexpr std::int16_t mam() const { return mam_; }
+  constexpr CISTA_CUDA_COMPAT std::int16_t days() const { return days_; }
+  constexpr CISTA_CUDA_COMPAT std::int16_t mam() const { return mam_; }
 
   friend std::ostream& operator<<(std::ostream& out, delta const& d) {
     return out << duration_t{static_cast<duration_t::rep>(d.mam_)} << "."
                << d.days_;
   }
 
-  friend delta operator-(delta const a, delta const b) {
+  friend CISTA_CUDA_COMPAT delta operator-(delta const a, delta const b) {
     return delta{static_cast<std::uint16_t>((a.days_ - b.days_) * 1440U +
                                             (a.mam_ - b.mam_))};
   }
