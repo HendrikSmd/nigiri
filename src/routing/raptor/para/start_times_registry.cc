@@ -3,6 +3,8 @@
 #include "nigiri/common/clear_all.h"
 #include "nigiri/routing/raptor/para/routing_time.h"
 
+#include "utl/parallel_for.h"
+
 namespace nigiri::routing::para {
 
   void relativize_bin_and_push(std::vector<cmpnt_dep_event> const& dep_events,
@@ -136,12 +138,13 @@ void push_bins(std_vecvec<cmpnt_dep_event> const& bins,
     clear();
 
     const auto cell_cut_cmpnts = collect_cell_cut_cmpnts(tt, n_of_cells, cmpnt_to_cell_idxs);
-    for (auto cell_idx = 0U; cell_idx < n_of_cells; ++cell_idx) {
-      populate_start_times_for_cell(tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx], route_events_from,
-                                    route_event_mask, cmpnt_dep_events_buffer_[cell_idx],
-                                    compress_bins, bin_start_idxs_[cell_idx],
-                                    cell_cmpnt_search_bins_[cell_idx]);
-    }
+    utl::parallel_for_run(n_of_cells, [&](size_t const cell_idx) {
+      populate_start_times_for_cell(
+          tt, cell_cut_cmpnts[cell_idx], route_masks[cell_idx],
+          route_events_from, route_event_mask,
+          cmpnt_dep_events_buffer_[cell_idx], compress_bins,
+          bin_start_idxs_[cell_idx], cell_cmpnt_search_bins_[cell_idx]);
+    });
   }
 
   void start_times_registry::resize(size_t const n_of_cells) {
