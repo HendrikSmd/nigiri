@@ -8,13 +8,14 @@
 #include <bit>
 #include <fstream>
 #include <vector>
+#include <unordered_set>
 
 #include "utl/timer.h"
 #include "utl/verify.h"
 
 namespace nigiri::routing {
 
-enum class hedge_weighting : std::uint8_t { kNumRoutes, kNumEvents };
+enum class hedge_weighting : std::uint8_t { kNumRoutes, kNumEvents, kNumDailyEvents };
 
 enum class hedge_normalization : std::uint8_t {
   kNone,
@@ -28,6 +29,38 @@ struct route_hyper_graph {
   using node_value_t = size_t;
   using hedge_value_t = size_t;
   using hedge_t = std::vector<route_idx_t>;
+
+  void combine_hedge_weights(timetable const& tt) {
+    std::vector new_hedge_weights(hedge_weights);
+
+    const auto n_components = tt.component_locations_.size();
+    for (auto component_idx = component_idx_t{0}; component_idx < n_components;
+         ++component_idx) {
+      std::unordered_set<component_idx_t> seen;
+      auto const& locs_in_cmpnt = tt.component_locations_[component_idx];
+      seen.insert(component_idx);
+
+      for (const auto loc : locs_in_cmpnt) {
+        const auto loc_routes = tt.location_routes_[loc];
+        for (const auto r : loc_routes) {
+          const auto stop_seq = tt.route_location_seq_[r];
+          for (auto i = 0U; i < stop_seq.size(); ++i) {
+            const auto stp = stop{stop_seq[i]};
+            const auto stop_loc = stp.location_idx();
+            const auto stop_cmpnt = tt.location_component_[stop_loc];
+            if (seen.contains(stop_cmpnt)) {
+              continue;
+            }
+
+            new_hedge_weights[to_idx(component_idx)] += hedge_weights[to_idx(stop_cmpnt)];
+            seen.insert(stop_cmpnt);
+          }
+        }
+      }
+    }
+
+    hedge_weights.swap(new_hedge_weights);
+  }
 
   void sort_hedges_lexicographically() {
     utl::verify(hyper_edges.size() == hedge_weights.size(),
@@ -77,7 +110,8 @@ struct route_hyper_graph {
   }
 
   void from(timetable const& tt, hedge_weighting const weighting_scheme,
-            hedge_normalization const normalization) {
+            hedge_normalization const normalization,
+            bool const combine_hedge_weights_of_neighbors = false) {
     hyper_edges.clear();
     node_weights.clear();
     hedge_weights.clear();
@@ -115,7 +149,7 @@ struct route_hyper_graph {
     // ==========================
     // write hyper edge weights
     // --------------------------
-    hedge_weights.resize(n_components, 0);
+    hedge_weights.resize(n_components, 0U);
     for (auto component_idx = component_idx_t{0}; component_idx < n_components;
          ++component_idx) {
       auto const& locs_in_cmpnt = tt.component_locations_[component_idx];
@@ -125,8 +159,11 @@ struct route_hyper_graph {
           total_weight += tt.n_events_at_location(loc);
         } else if (weighting_scheme == hedge_weighting::kNumRoutes) {
           total_weight += tt.n_routes_at_location(loc);
+        } else if (weighting_scheme == hedge_weighting::kNumDailyEvents) {
+          total_weight += tt.n_daily_events_at_location(loc);
         }
       }
+
       if (normalization == hedge_normalization::kCmpntSize ||
           normalization == hedge_normalization::kLogCmpntSize) {
         hedge_weights[to_idx(component_idx)] =
@@ -134,6 +171,9 @@ struct route_hyper_graph {
       } else {
         hedge_weights[to_idx(component_idx)] = total_weight;
       }
+    }
+    if (combine_hedge_weights_of_neighbors) {
+      combine_hedge_weights(tt);
     }
 
     // ==========================

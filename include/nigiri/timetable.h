@@ -163,8 +163,9 @@ struct timetable {
     auto const& loc_routes = location_routes_[loc];
     for (auto const loc_route : loc_routes) {
       auto const& loc_seq = route_location_seq_[loc_route];
+      auto const& route_transport_range = route_transport_ranges_[loc_route];
       // Find the position of loc in the route loc_route
-      const auto stop_it = std::ranges::find_if(
+      auto stop_it = std::ranges::find_if(
         loc_seq,
         [=](stop::value_type const& s) {
           return stop{s}.location_idx() == loc;
@@ -172,21 +173,59 @@ struct timetable {
       utl::verify(stop_it != loc_seq.end(),
                   "location {} expected in route {} but could not be found",
                   loc, loc_route);
+      while (stop_it != loc_seq.end()) {
+        // If loc is first/last stop we only have departure/arrival
+        // event per trip. If not we have both (arrival and departure).
+        std::uint8_t event_multiplier =
+            (stop_it == loc_seq.begin() || stop_it == loc_seq.end() - 1) ? 1U
+                                                                         : 2U;
 
-      // If loc is first/last stop we only have departure/arrival
-      // event per trip. If not we have both (arrival and departure).
-      std::uint8_t event_multiplier =
-        (stop_it == loc_seq.begin() ||
-        stop_it == loc_seq.end()-1) ? 1U : 2U;
+        // Find all traffic day transports of the current route
+        for (auto const t_idx : route_transport_range) {
+          auto const td_bitfield_idx = transport_traffic_days_[t_idx];
+          auto const& td_bitfield = bitfields_[td_bitfield_idx];
+          // Counting the set bits correspond to the actual number of trips of
+          // this transport in the time captured by the timetable
+          res += td_bitfield.count() * event_multiplier;
+        }
 
+        stop_it = std::find_if(stop_it + 1, loc_seq.end(),
+                               [=](stop::value_type const& s) {
+                                 return stop{s}.location_idx() == loc;
+                               });
+      }
+    }
+    return res;
+  }
+
+  size_t n_daily_events_at_location(location_idx_t const loc) const {
+    size_t res = 0;
+    // Get all routes in which loc is a stop
+    auto const& loc_routes = location_routes_[loc];
+    for (auto const loc_route : loc_routes) {
+      auto const& loc_seq = route_location_seq_[loc_route];
       auto const& route_transport_range = route_transport_ranges_[loc_route];
-      // Find all traffic day transports of the current route
-      for (auto const t_idx : route_transport_range) {
-        auto const td_bitfield_idx = transport_traffic_days_[t_idx];
-        auto const& td_bitfield = bitfields_[td_bitfield_idx];
-        // Counting the set bits correspond to the actual number of trips of this transport
-        // in the time captured by the timetable
-        res += td_bitfield.count() * event_multiplier;
+      // Find the position of loc in the route loc_route
+      auto stop_it = std::ranges::find_if(
+        loc_seq,
+        [=](stop::value_type const& s) {
+          return stop{s}.location_idx() == loc;
+        });
+      utl::verify(stop_it != loc_seq.end(),
+                  "location {} expected in route {} but could not be found",
+                  loc, loc_route);
+      while (stop_it != loc_seq.end()) {
+        // If loc is first/last stop we only have departure/arrival
+        // event per trip. If not we have both (arrival and departure).
+        std::uint8_t event_multiplier =
+            (stop_it == loc_seq.begin() || stop_it == loc_seq.end() - 1) ? 1U
+                                                                         : 2U;
+        res += event_multiplier * route_transport_range.size();
+
+        stop_it = std::find_if(stop_it + 1, loc_seq.end(),
+                               [=](stop::value_type const& s) {
+                                 return stop{s}.location_idx() == loc;
+                               });
       }
     }
     return res;

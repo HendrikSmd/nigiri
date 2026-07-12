@@ -175,6 +175,7 @@ int main(int argc, char** argv) {
     auto hedge_weights = true;
     std::string hedge_weighting_scheme = "numEvents";
     std::string hedge_normalization = "none";
+    auto combine_neighbored_hedge_weights = false;
 
     bpo::options_description export_hgraph_desc("export-hgraph options");
     export_hgraph_desc.add_options()(
@@ -190,13 +191,16 @@ int main(int argc, char** argv) {
         bpo::value(&hedge_weighting_scheme)
             ->default_value(hedge_weighting_scheme),
         "hedge weighting scheme (numRoutes)=number of routes incident to "
-        "component, (numEvents)=num events incident to component")(
+        "component, (numEvents)=num events incident to component, "
+        "(numDailyEvents)=num daily events incident to component")(
         "hedge_normalization",
         bpo::value(&hedge_normalization)->default_value(hedge_normalization),
         "hedge normalization (none)=raw weights, (log)=log normalization, "
         "(cmpntSize)=normalized by component size, "
         "(logAndCmpntSize)=normalized by component size and then log "
-        "normalized");
+        "normalized")("combine_hedge_weights",
+        bpo::value(&combine_neighbored_hedge_weights)->default_value(combine_neighbored_hedge_weights),
+        "Combine neighbored hedge weights");
 
     if (vm.contains("help")) {
       std::cout << export_hgraph_desc << "\n\n";
@@ -217,6 +221,8 @@ int main(int argc, char** argv) {
       hedge_weighting = routing::hedge_weighting::kNumEvents;
     } else if (hedge_weighting_scheme == "numRoutes") {
       hedge_weighting = routing::hedge_weighting::kNumRoutes;
+    } else if (hedge_weighting_scheme == "numDailyEvents") {
+      hedge_weighting = routing::hedge_weighting::kNumDailyEvents;
     } else {
       utl::fail("Invalid hedge weighting scheme");
     }
@@ -233,11 +239,12 @@ int main(int argc, char** argv) {
     } else {
       utl::fail("Invalid hedge normalization");
     }
-    nigiri::log(log_lvl::info, "hyper-graph export",
-                "Hedge weighting scheme: {}",
-                (hedge_weighting == routing::hedge_weighting::kNumRoutes)
-                    ? "numRoutes"
-                    : "numEvents");
+    nigiri::log(
+        log_lvl::info, "hyper-graph export", "Hedge weighting scheme: {}",
+        (hedge_weighting == routing::hedge_weighting::kNumRoutes) ? "numRoutes"
+        : (hedge_weighting == routing::hedge_weighting::kNumEvents)
+            ? "numEvents"
+            : "numDailyEvents");
 
     nigiri::log(
         log_lvl::info, "hyper-graph export", "Hedge normalization: {}",
@@ -249,7 +256,7 @@ int main(int argc, char** argv) {
                           ? "cmpntSize"
                           : "logAndCmpntSize")));
     routing::route_hyper_graph hyper_graph;
-    hyper_graph.from(tt, hedge_weighting, normalization);
+    hyper_graph.from(tt, hedge_weighting, normalization, combine_neighbored_hedge_weights);
     hyper_graph.export_as_hmetis(out, node_weights, hedge_weights);
   } else if (command == "import-partition") {
     auto in_part = fs::path{};
