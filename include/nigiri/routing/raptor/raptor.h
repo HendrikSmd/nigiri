@@ -18,6 +18,8 @@
 
 #include "nigiri/routing/raptor/para/route_rank_store.h"
 
+#include "utl/enumerate.h"
+
 namespace nigiri::routing {
 
 struct raptor_stats {
@@ -437,13 +439,24 @@ private:
       auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
       auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
       for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
-        min_lcls_[to_idx(r_idx)] = std::min(lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_start), lcl(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_dest));
+        min_lcls_[to_idx(r_idx)] = std::min(LCL(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_start), LCL(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_dest));
       }
     }
   }
 
-  static rank_t lcl(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
+  static rank_t LCL(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
     return rank_t{g_cell.level_ + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx_.v_ ^ (route_cell.v_ >> g_cell.level_)))};
+  }
+
+  static rank_t LCL(para::route_partition::global_cell_idx c1, para::route_partition::global_cell_idx c2) {
+    auto [higher, deeper] = std::tie(c1, c2);
+    if (higher.level_ < deeper.level_) {
+      std::swap(higher, deeper);
+    }
+
+    uint16_t const aligned_deeper_idx = to_idx(deeper.cell_idx_) >> (higher.level_ - deeper.level_);
+    uint16_t const divergence = to_idx(higher.cell_idx_) ^ aligned_deeper_idx;
+    return rank_t{higher.level_ + static_cast<std::uint8_t>(std::bit_width(divergence))};
   }
 
   date::sys_days base() const {
@@ -658,7 +671,19 @@ private:
       auto const& fps = kFwd ? tt_.locations_.footpaths_out_[prf_idx][l_idx]
                              : tt_.locations_.footpaths_in_[prf_idx][l_idx];
 
-      for (auto const& fp : fps) {
+
+      auto const fp_cmpnt = tt_.location_component_[l_idx];
+      for (auto const [j, fp] : utl::enumerate(fps)) {
+        if constexpr (algo_version == version::kParaPlainRanks) {
+          auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
+          auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
+          auto const fp_g_cell = rank_store_.partition_.cmpnt_to_cell_idx_[fp_cmpnt];
+          auto const rank = rank_store_.fp_ranks_[l_idx][j];
+          if (rank < std::min(LCL(g_cell_start, fp_g_cell), LCL(fp_g_cell, g_cell_dest))) {
+            continue;
+          }
+        }
+
         ++stats_.n_footpaths_visited_;
 
         auto const target = to_idx(fp.target());

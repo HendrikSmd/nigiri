@@ -91,11 +91,12 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
   routing::para::bmc_raptor_state state;
   bitvec route_mask = bitvec::max(tt.n_routes());
   bitvec transfer_mask = bitvec::max(tt.n_locations());
+  bitvec fp_mask = bitvec::max(tt.locations_.footpaths_out_[kDefaultProfile].data_.size());
   bitvec destination_mask(tt.n_locations());
   routing::para::timetable_view tt_view(tt, route_mask);
 
   routing::para::bmc_raptor raptor(
-    tt_view, state, destination_mask, {} ,transfer_mask);
+    tt_view, state, destination_mask, {} ,transfer_mask, fp_mask);
 
   const auto start_loc = q.start_.front().target();
   const auto dest_loc = q.destination_.front().target();
@@ -380,19 +381,19 @@ int main(int argc, char** argv) {
 
     routing::para::customizer customizer{tt};
 
-    vecvec<route_idx_t, rank_t> final_ranks;
+    vecvec<route_idx_t, rank_t> final_route_ranks;
+    vecvec<location_idx_t, rank_t> final_fp_ranks;
     auto start = std::chrono::high_resolution_clock::now();
-    customizer.compute_ranks(partition, final_ranks);
-
-    routing::para::plain_route_rank_store rank_store;
-    rank_store.digest(tt, std::move(partition), std::move(final_ranks));
-    rank_store.print_summary(std::cout, tt);
-    rank_store.write(out);
+    customizer.compute_ranks(partition, final_route_ranks, final_fp_ranks);
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::endl << std::format("Execution Time: {:%H:%M:%S}\n", end - start);
 #ifndef _WIN32
     print_memory_usage();
 #endif
+    routing::para::plain_route_rank_store rank_store;
+    rank_store.digest(tt, std::move(partition), std::move(final_route_ranks), std::move(final_fp_ranks));
+    rank_store.print_summary(std::cout, tt);
+    rank_store.write(out);
   } else if (command == "inspect-rank-store") {
     auto in_store = fs::path{};
     auto in_tt = fs::path{};

@@ -27,13 +27,15 @@ struct customizer {
                 std::uint8_t const level,
                 size_t const bin_idx,
                 atomic_ranks_t& atomic_route_ranks,
-                atomic_ranks_t& atomic_route_event_ranks) :
+                atomic_ranks_t& atomic_route_event_ranks,
+                atomic_ranks_t& atomic_foot_path_ranks) :
     cell_idx_(cell_idx),
     component_idx_(component_idx),
     level_{level},
     bin_idx_(bin_idx),
     atomic_route_ranks_(atomic_route_ranks),
-    atomic_route_event_ranks_(atomic_route_event_ranks) {}
+    atomic_route_event_ranks_(atomic_route_event_ranks),
+    atomic_foot_path_ranks_(atomic_foot_path_ranks) {}
 
     cell_idx_t cell_idx_;
     component_idx_t component_idx_;
@@ -41,6 +43,7 @@ struct customizer {
     size_t bin_idx_;
     atomic_ranks_t& atomic_route_ranks_;
     atomic_ranks_t& atomic_route_event_ranks_;
+    atomic_ranks_t& atomic_foot_path_ranks_;
   };
 
   struct local_thread_context {
@@ -55,7 +58,7 @@ struct customizer {
 
   customizer(timetable const& tt);
 
-  void compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks);
+  void compute_ranks(route_partition const& partition, vecvec<route_idx_t, rank_t>& out_ranks, vecvec<location_idx_t, rank_t>& out_fp_ranks);
   void initialize(route_partition const& p);
   void initialize_route_masks(route_partition const& p);
   void initialize_cut_stops(route_partition const& p);
@@ -78,26 +81,30 @@ struct customizer {
       bmc_raptor_state const& state, local_thread_context const& context,
       unsigned k, location_idx_t target, std::uint8_t level, cell_idx_t cell,
       component_idx_t component_idx, atomic_ranks_t& atomic_route_ranks,
-      atomic_ranks_t& atomic_route_event_ranks);
+      atomic_ranks_t& atomic_route_event_ranks, atomic_ranks_t& atomic_foot_path_ranks);
 
   void mc_backtrack_and_update_ranks(
     pareto_set<mc_raptor_label>::const_iterator root_label,
     mc_raptor_state const& state, local_thread_context const& context,
     unsigned k, location_idx_t target, std::uint8_t level, cell_idx_t cell,
     component_idx_t component_idx, atomic_ranks_t& atomic_route_ranks,
-    atomic_ranks_t& atomic_route_event_ranks);
+    atomic_ranks_t& atomic_route_event_ranks, atomic_ranks_t& atomic_foot_path_ranks);
 
   void log_progress(std::vector<std::atomic<size_t>> const& cell_progress) const;
 
   void mark_routes_and_events_from_ranks(route_partition const& partition,
                                          std::uint8_t level,
                                          atomic_ranks_t const& atomic_route_ranks,
-                                         atomic_ranks_t const& atomic_route_event_ranks);
+                                         atomic_ranks_t const& atomic_route_event_ranks,
+                                         atomic_ranks_t const& foot_path_ranks);
 
   void materialize_atomic_ranks(atomic_ranks_t const& atomic_route_event_ranks,
-                                vecvec<route_idx_t, rank_t>& out_ranks);
+                                atomic_ranks_t const& atomic_fp_ranks,
+                                vecvec<route_idx_t, rank_t>& out_ranks,
+                                vecvec<location_idx_t, rank_t>& out_fp_ranks);
 
   void compute_route_event_ranks_index();
+  void update_cut_component_fps(atomic_ranks_t& fp_ranks, std::uint8_t level);
 
   const timetable& tt_;
 
@@ -124,8 +131,10 @@ struct customizer {
    * an all-ones mask. Gradually bits are cleared.
    */
   bitvec route_event_mask_;
+  bitvec foot_path_mask_;
 
   bitvec marked_routes_;
+  bitvec marked_foot_paths_;
   vector_map<route_idx_t, std::uint32_t> route_event_starts_index_;
   bitvec marked_route_events_;
 

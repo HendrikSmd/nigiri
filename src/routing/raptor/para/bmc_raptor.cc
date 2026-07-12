@@ -23,12 +23,14 @@ bmc_raptor::bmc_raptor(timetable_view const& tt_view,
                        bmc_raptor_state& state,
                        bitvec const& destination_mask,
                        vector_map<route_idx_t, std::uint32_t> const& route_events_from,
-                       bitvec const& route_event_mask)
+                       bitvec const& route_event_mask,
+                       bitvec const& footpath_mask)
     : tt_view_(tt_view),
       state_(state),
       destination_mask_(destination_mask),
       route_event_mask_(route_event_mask),
       route_events_from_(route_events_from),
+      footpath_mask_(footpath_mask),
       tt_day_mask_(get_tt_day_mask(tt_view.get_source_tt())) {
   state_.resize(tt_view.get_n_locations(), tt_view.get_n_routes(),
                 static_cast<unsigned int>(destination_mask_.count()));
@@ -308,6 +310,9 @@ void bmc_raptor::update_footpaths(unsigned const k) {
     location_idx_t const source_location_idx =
         tt_view_.get_source_idx(location_view_idx);
 
+    const unsigned long fps_from_idx =
+      tt.locations_.footpaths_out_[kDefaultProfile].bucket_starts_.at(to_idx(source_location_idx));
+
     auto const fps = tt.locations_.footpaths_out_[kDefaultProfile][source_location_idx];
     for (auto rl_view : round_bag) {
     if (rl_view.label_.is_footpath_ == 1) {
@@ -318,12 +323,18 @@ void bmc_raptor::update_footpaths(unsigned const k) {
     auto const base_arr = rl_view.label_.arrival_;
     auto const dep = rl_view.label_.departure_;
 
-      for (auto const& fp : fps) {
+      for (auto const [j, fp] : utl::enumerate(fps)) {
         auto const target = fp.target();
 
         if (target == source_location_idx) {
           continue;
         }
+
+        if (!footpath_mask_.test(static_cast<std::uint32_t>(fps_from_idx + j))) {
+          continue;
+        }
+
+
 
         std::uint16_t const arr_with_foot =
             base_arr + static_cast<uint16_t>(fp.duration().count());
