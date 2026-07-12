@@ -283,7 +283,7 @@ TEST(routing, start_times) {
                                   sys_days{2020_y / March / 31}},
              {{A, 15_minutes, 0}, {B, 30_minutes, 0}}, {}, {},
              duration_t::max(), location_match_mode::kExact, false, starts,
-             true, 0, {});
+             true, 0, {}, bitvec::max(tt.n_routes()));
   std::sort(begin(starts), end(starts),
             [](auto&& a, auto&& b) { return a > b; });
   starts.erase(std::unique(begin(starts), end(starts)), end(starts));
@@ -369,7 +369,7 @@ TEST(routing, rt_start_times) {
                interval<unixtime_t>{sys_days{2024_y / July / 9} + 21_hours,
                                     sys_days{2024_y / July / 9} + 23_hours},
                {{A, 15_minutes, 0}}, {}, {}, duration_t::max(),
-               location_match_mode::kExact, false, starts, true, 0, {});
+               location_match_mode::kExact, false, starts, true, 0, {}, bitvec::max(tt.n_routes()));
     std::sort(begin(starts), end(starts),
               [](auto&& a, auto&& b) { return a > b; });
     starts.erase(std::unique(begin(starts), end(starts)), end(starts));

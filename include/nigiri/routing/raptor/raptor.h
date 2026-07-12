@@ -17,6 +17,7 @@
 #include "nigiri/types.h"
 
 #include "nigiri/routing/raptor/para/route_rank_store.h"
+#include "nigiri/routing/raptor/para/lcl.h"
 
 #include "utl/enumerate.h"
 
@@ -121,6 +122,7 @@ struct raptor {
   using algo_stats_t = raptor_stats;
 
   static constexpr bool kUseLowerBounds = true;
+  static constexpr bool kUseSimd = true;
   static constexpr auto const kFwd = (SearchDir == direction::kForward);
   static constexpr auto const kBwd = (SearchDir == direction::kBackward);
   static constexpr auto const kInvalid = kInvalidDelta<SearchDir>;
@@ -435,17 +437,17 @@ private:
       }
     }
     if constexpr (is_para_accelerated(algo_version)) {
-      min_lcls_.resize(n_routes_);
       auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
       auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
-      for (auto r_idx = route_idx_t{0U}; r_idx < n_routes_; ++r_idx) {
-        min_lcls_[to_idx(r_idx)] = std::min(LCL(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_start), LCL(rank_store_.partition_.route_to_cell_idx_[r_idx], g_cell_dest));
+      if constexpr (kUseSimd) {
+        compute_min_lcls_avx512(min_lcls_, rank_store_.partition_.route_to_cell_idx_, g_cell_start, g_cell_dest, n_routes_);
+      } else {
+        min_lcls_.resize(n_routes_);
+        for (auto r = route_idx_t{0U}; r < n_routes_; ++r) {
+          min_lcls_[to_idx(r)] = std::min(para::LCL(rank_store_.partition_.route_to_cell_idx_[r], g_cell_start), para::LCL(rank_store_.partition_.route_to_cell_idx_[r], g_cell_dest));
+        }
       }
     }
-  }
-
-  static rank_t LCL(cell_idx_t route_cell, para::route_partition::global_cell_idx g_cell) {
-    return rank_t{g_cell.level_ + static_cast<uint8_t>(std::bit_width<uint16_t>(g_cell.cell_idx_.v_ ^ (route_cell.v_ >> g_cell.level_)))};
   }
 
   static rank_t LCL(para::route_partition::global_cell_idx c1, para::route_partition::global_cell_idx c2) {
