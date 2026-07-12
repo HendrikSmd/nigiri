@@ -71,35 +71,50 @@ void bmc_raptor::cleanup_after_footpaths_at_non_dest(bmc_raptor_bag_t& bag) {
 
 bool bmc_raptor::add_carefully_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                                  const bmc_raptor_label& label,
-                                                 search_bitfield sbf) {
+                                                 search_bitfield const& sbf) {
   return bag.add_careful<&dominates_destination>(label, sbf);
 }
 
-bool bmc_raptor::add_carefully_to_non_dest_round_bag(
-    bmc_raptor_bag_t& bag, bmc_raptor_label const& label, search_bitfield sbf) {
+bool bmc_raptor::add_carefully_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
+                                                     bmc_raptor_label const& label,
+                                                     search_bitfield const& sbf) {
   return bag.add_careful<&dominates_non_destination>(label, sbf);
 }
 
 bool bmc_raptor::add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
                                            bmc_raptor_label const& label,
-                                           search_bitfield const bf) {
+                                           search_bitfield const& bf) {
   return bag.add<&dominates_non_destination>(label, bf);
 }
 
 bool bmc_raptor::add_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                        bmc_raptor_label const& label,
-                                       search_bitfield const bf) {
+                                       search_bitfield const& bf) {
   return bag.add<&dominates_destination>(label, bf);
 }
 
+bool bmc_raptor::add_to_non_dest_best_bag(bmc_raptor_best_bag_t& bag,
+                                          bmc_raptor_label const& label,
+                                          search_bitfield const& sbf) {
+  return bag.add<bmc_raptor_best_label::dominates_non_destination, bmc_raptor_best_label::equals>(
+    {label.arrival_, label.arrival_with_transfer_, label.departure_}, sbf);
+}
+
+bool bmc_raptor::add_to_dest_best_bag(bmc_raptor_best_bag_t& bag,
+                                      bmc_raptor_label const& label,
+                                      search_bitfield const& sbf) {
+  return bag.add<bmc_raptor_best_label::dominates_destination, bmc_raptor_best_label::equals>(
+    {label.arrival_, label.arrival_with_transfer_, label.departure_}, sbf);
+}
+
 bool bmc_raptor::add_to_route_bag(bmc_raptor_route_bag_t& bag,
-                                  bmc_raptor_route_label label,
-                                  search_bitfield bf) {
+                                  bmc_raptor_route_label const& label,
+                                  search_bitfield const& sbf) {
   constexpr auto dom = [](bmc_raptor_route_label const& l1,
                           bmc_raptor_route_label const& l2) {
     return l1.dominates(l2);
   };
-  return bag.add<dom>(label, bf);
+  return bag.add<dom>(label, sbf);
 }
 
 void bmc_raptor::init_location_with_offset(location_idx_view_t const location_idx_view,
@@ -337,11 +352,11 @@ void bmc_raptor::update_footpaths(unsigned const k) {
         bool const is_target_destination = destination_mask_[to_idx(target)];
 
         if (is_target_destination) {
-          filter_by_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
-                                    label_with_foot, tdb);
+          filter_by_dest_bag(state_.best_bags_[to_idx(target_view_idx)],
+                             label_with_foot, tdb);
         } else {
-          filter_by_non_dest_bag<false>(state_.best_bags_[to_idx(target_view_idx)],
-                                        label_with_foot, tdb);
+          filter_by_non_dest_bag(state_.best_bags_[to_idx(target_view_idx)],
+                                 label_with_foot, tdb);
         }
 
         if (tdb.none()) {
@@ -450,16 +465,16 @@ bool bmc_raptor::update_route(unsigned const k, route_idx_t const route_idx) {
         const auto& best_bag = state_.best_bags_[to_idx(view_location_idx)];
         if (tt.is_location_transitive_.test(to_idx(source_location_idx))) {
           if (is_destination) {
-            filter_by_dest_bag<false>(best_bag, candidate_lbl, candidate_tdb);
+            filter_by_dest_bag(best_bag, candidate_lbl, candidate_tdb);
           } else {
-            filter_by_non_dest_bag<false>(best_bag, candidate_lbl,
+            filter_by_non_dest_bag(best_bag, candidate_lbl,
                                           candidate_tdb);
           }
         } else {
           if (is_destination) {
-            filter_by_dest_bag<true>(best_bag, candidate_lbl, candidate_tdb);
+            filter_by_dest_bag(best_bag, candidate_lbl, candidate_tdb);
           } else {
-            filter_by_non_dest_bag<true>(best_bag, candidate_lbl,
+            filter_by_non_dest_bag(best_bag, candidate_lbl,
                                          candidate_tdb);
           }
         }
@@ -518,9 +533,9 @@ void bmc_raptor::rounds() {
           for (auto const& l : state_.round_bags_[k - 1][to_idx(location_view_idx)]) {
             auto& best_bag = state_.best_bags_[to_idx(location_view_idx)];
             if (is_destination) {
-              add_to_dest_round_bag(best_bag, l.label_, l.tdb_);
+              add_to_dest_best_bag(best_bag, l.label_, l.tdb_);
             } else {
-              add_to_non_dest_round_bag(best_bag, l.label_, l.tdb_);
+              add_to_non_dest_best_bag(best_bag, l.label_, l.tdb_);
             }
           }
         }

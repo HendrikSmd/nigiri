@@ -20,9 +20,13 @@ struct bmc_raptor_bag {
   using iterator = typename std::vector<indexed_label>::iterator;
   using const_iterator = typename std::vector<indexed_label>::const_iterator;
 
-  template <auto dominates>
+  template <auto dominates, auto equals = nullptr>
   bool add(T label, search_bitfield tdb) {
+
+    constexpr bool combine_bitfields = !std::is_same_v<decltype(equals), std::nullptr_t>;
+
     auto n_removed = std::size_t{0};
+    auto insert_at = labels_.size();
     for (size_t i = 0U; i < labels_.size(); ++i) {
       auto& el = labels_[i];
       if (dominates(el.label_, label)) {
@@ -38,7 +42,19 @@ struct bmc_raptor_bag {
           continue;
         }
       }
+      if constexpr (combine_bitfields) {
+        if (equals(el.label_, label)) {
+          insert_at = i - n_removed;
+        }
+      }
       labels_[i - n_removed] = labels_[i];
+    }
+    if constexpr (combine_bitfields) {
+      if (insert_at < labels_.size()) {
+        labels_.resize(labels_.size() - n_removed);
+        labels_[insert_at].tdb_ |= tdb;
+        return true;
+      }
     }
     labels_.resize(labels_.size() - n_removed + 1);
     labels_.back() = indexed_label{label, tdb};

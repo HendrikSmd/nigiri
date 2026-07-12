@@ -74,45 +74,45 @@ struct bmc_raptor {
 
   static bool add_carefully_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                               const bmc_raptor_label& label,
-                                              search_bitfield sbf);
+                                              search_bitfield const& sbf);
 
   static bool add_carefully_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
                                                   bmc_raptor_label const& label,
-                                                  search_bitfield sbf);
+                                                  search_bitfield const& sbf);
 
   static bool add_to_non_dest_round_bag(bmc_raptor_bag_t& bag,
                                         const bmc_raptor_label& label,
-                                        search_bitfield sbf);
+                                        search_bitfield const& sbf);
 
   static bool add_to_dest_round_bag(bmc_raptor_bag_t& bag,
                                     bmc_raptor_label const& label,
-                                    search_bitfield sbf);
+                                    search_bitfield const& sbf);
 
-  template<bool skip_bag_arrivals_with_fps>
-  static void filter_by_non_dest_bag(bmc_raptor_bag_t const& bag,
+  static bool add_to_non_dest_best_bag(bmc_raptor_best_bag_t& bag,
+                                       bmc_raptor_label const& label,
+                                       search_bitfield const& sbf);
+
+  static bool add_to_dest_best_bag(bmc_raptor_best_bag_t& bag,
+                                   bmc_raptor_label const& label,
+                                   search_bitfield const& sbf);
+
+  static void filter_by_non_dest_bag(bmc_raptor_best_bag_t const& bag,
                                      bmc_raptor_label const& label,
                                      search_bitfield& sbf) {
-    if constexpr (skip_bag_arrivals_with_fps) {
-      bag.filter_dominated<&dominates_non_destination_skip_fps>(label, sbf);
-    } else {
-      bag.filter_dominated<&dominates_non_destination>(label, sbf);
-    }
+      bag.filter_dominated<bmc_raptor_best_label::dominates_non_destination>(
+        {label.arrival_, label.arrival_with_transfer_, label.departure_}, sbf);
   }
 
-  template<bool skip_bag_arrivals_with_fps>
-  static void filter_by_dest_bag(bmc_raptor_bag_t const& bag,
+  static void filter_by_dest_bag(bmc_raptor_best_bag_t const& bag,
                                  bmc_raptor_label const& label,
                                  search_bitfield& sbf) {
-    if constexpr (skip_bag_arrivals_with_fps) {
-      bag.filter_dominated<&dominates_destination_skip_fps>(label, sbf);
-    } else {
-      bag.filter_dominated<&dominates_destination>(label, sbf);
-    }
+      bag.filter_dominated<bmc_raptor_best_label::dominates_destination>(
+        {label.arrival_, label.arrival_with_transfer_, label.departure_}, sbf);
   }
 
   static bool add_to_route_bag(bmc_raptor_route_bag_t& bag,
-                               bmc_raptor_route_label label,
-                               search_bitfield sbf);
+                               bmc_raptor_route_label const& label,
+                               search_bitfield const& sbf);
 
   static bitset<kMaxDays> get_tt_day_mask(timetable const& tt);
 

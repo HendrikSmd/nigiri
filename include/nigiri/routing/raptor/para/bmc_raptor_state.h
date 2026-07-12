@@ -11,6 +11,7 @@
 namespace nigiri::routing::para {
 
 using bmc_raptor_bag_t = bmc_raptor_bag<bmc_raptor_label>;
+using bmc_raptor_best_bag_t = bmc_raptor_bag<bmc_raptor_best_label>;
 using bmc_raptor_route_bag_t = bmc_raptor_bag<bmc_raptor_route_label>;
 
 struct bmc_raptor_state {
@@ -21,7 +22,7 @@ struct bmc_raptor_state {
 
   void reset();
 
-  std::vector<bmc_raptor_bag_t> best_bags_;
+  std::vector<bmc_raptor_best_bag_t> best_bags_;
   simple_flat_matrix<bmc_raptor_bag_t> round_bags_;
 
   std::vector<pareto_set<journey>> results_;
