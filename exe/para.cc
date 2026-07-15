@@ -106,8 +106,23 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
   raptor.rounds();
 
+  std::vector<routing::para::relative_journey> rel_result;
+  raptor.enforce_strong_dominance(tt_view.get_view_idx(dest_loc), rel_result);
   std::vector<routing::para::bmc_journey> result;
-  raptor.emplace_relative_journeys_for(tt_view.get_view_idx(dest_loc), result);
+  for (auto const& rel_j : rel_result) {
+    rel_j.sbf_.for_each_set_bit([&](size_t const i) {
+      pareto_utils<routing::para::bmc_journey>::pareto_add(
+          result,
+          {.arrival_ = routing::para::routing_time{static_cast<int>(
+               i * 1440 + rel_j.arrival_)},
+           .departure_ = routing::para::routing_time{static_cast<int>(
+               i * 1440 + rel_j.departure_)},
+           .transfers_ =
+               static_cast<std::uint16_t>(rel_j.k_ > 0 ? rel_j.k_ - 1 : 0U),
+           .label_iter_ = rel_j.label_iter_},
+          routing::para::bmc_journey::dominates);
+    });
+  }
   return result;
 }
 

@@ -310,7 +310,7 @@ void customizer::bmc_cut_routing_task(
 
   raptor.rounds();
 
-  std::vector<bmc_journey> bmc_journey_bag;
+  std::vector<relative_journey> relative_journey_bag;
   cell_cut_stops_[to_idx(cell)].for_each_set_bit([&](size_t i) {
     location_idx_t const destination_loc_idx = location_idx_t{i};
     location_idx_view_t const destination_loc_view_idx =
@@ -319,19 +319,18 @@ void customizer::bmc_cut_routing_task(
     if (destination_loc_view_idx == location_idx_view_t::invalid()) {
       return;
     }
-
-    raptor.emplace_relative_journeys_for(destination_loc_view_idx,
-                                         bmc_journey_bag);
-
-    for (auto const& bmc_j : bmc_journey_bag) {
-      bmc_backtrack_and_update_ranks(bmc_j.label_iter_, state, context,
-                                 bmc_j.transfers_ + 1, location_idx_t{i}, level,
-                                 cell, cut_cmpnt_from, task.atomic_route_ranks_,
-                                 task.atomic_route_event_ranks_, task.atomic_foot_path_ranks_);
+    raptor.enforce_strong_dominance(destination_loc_view_idx,
+                                    relative_journey_bag);
+    for (auto const& rel_j : relative_journey_bag) {
+      bmc_backtrack_and_update_ranks(
+          rel_j.label_iter_, state, context, rel_j.k_, location_idx_t{i}, level,
+          cell, cut_cmpnt_from, task.atomic_route_ranks_,
+          task.atomic_route_event_ranks_, task.atomic_foot_path_ranks_);
     }
 
-    bmc_journey_bag.clear();
+    relative_journey_bag.clear();
   });
+
 
   context.last_cell_idx_ = cell;
   ++cell_progress[to_idx(cell)];

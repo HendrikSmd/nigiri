@@ -647,35 +647,78 @@ void bmc_raptor::gather_journeys() {
 
 unsigned bmc_raptor::end_k() { return kMaxTransfers + 1U; }
 
-void bmc_raptor::emplace_relative_journeys_for(location_idx_view_t const loc_idx,
-                                               std::vector<bmc_journey>& bag) const {
-  constexpr auto dom = [](bmc_journey const& l1, bmc_journey const& l2) {
-    return bmc_journey::dominates(l1, l2);
-  };
+void bmc_raptor::enforce_strong_dominance(location_idx_view_t const loc_idx,
+                                          std::vector<relative_journey>& bag) const {
+  size_t total_size = 0U;
+  for (auto k = 1U; k != end_k(); ++k) {
+    total_size += state_.round_bags_[k][to_idx(loc_idx)].size();
+  }
+  if (total_size == 0) {
+    return;
+  }
+  bag.reserve(total_size);
 
-  for (auto k = 0U; k != end_k(); ++k) {
-    auto const& round_bag = state_.round_bags_[k][to_idx(loc_idx)];
-    if (round_bag.size() == 0) {
+  for (auto k = 1U; k != end_k(); ++k) {
+    auto const& labels_of_round = state_.round_bags_[k][to_idx(loc_idx)];
+    for (auto lbl_iter = labels_of_round.begin(); lbl_iter != labels_of_round.end(); ++lbl_iter) {
+      bag.emplace_back(lbl_iter->label_.arrival_, lbl_iter->label_.arrival_with_transfer_,
+                       lbl_iter->label_.departure_, k, lbl_iter, lbl_iter->tdb_);
+    }
+  }
+
+  std::ranges::sort(bag, std::ranges::less(), &relative_journey::arrival_);
+  for (auto i = 0U; i < bag.size() - 1; ++i) {
+    auto& focus_label = bag[i];
+    if (focus_label.sbf_.none()) {
       continue;
     }
 
-    for (auto label_it = round_bag.begin(); label_it != round_bag.end();
-         ++label_it) {
-      auto const label_view = *label_it;
-      auto const& tdb = label_view.tdb_;
-      tdb.for_each_set_bit([&](size_t const i) {
-        pareto_utils<bmc_journey>::pareto_add(
-            bag,
-            {.arrival_ = routing_time{static_cast<int>(i * 1440 +
-                                                       label_view.label_.arrival_)},
-             .departure_ = routing_time{static_cast<int>(
-                 i * 1440 + label_view.label_.departure_)},
-             .transfers_ = static_cast<std::uint16_t>(k > 0 ? k - 1 : 0U),
-             .label_iter_ = label_it},
-            dom);
-      });
+    auto j = i + 1;
+    while (j < bag.size()) {
+      auto& compare_label = bag[j];
+      if (focus_label.arrival_with_transfer_ < compare_label.arrival_) {
+        break;
+      }
+      if (focus_label.arrival_ <= compare_label.arrival_ &&
+          focus_label.k_ <= compare_label.k_ &&
+          focus_label.departure_ >= compare_label.departure_) {
+        compare_label.sbf_ &= ~focus_label.sbf_;
+      } else if (focus_label.arrival_ == compare_label.arrival_ &&
+                 compare_label.k_ <= focus_label.k_ &&
+                 compare_label.departure_ >= focus_label.departure_) {
+        focus_label.sbf_ &= ~compare_label.sbf_;
+      }
+      j++;
     }
   }
+
+  auto const n = bag.size();
+  auto right = 0U;
+
+  for (auto left = 0U; left < n; ++left) {
+    auto const& left_lbl = bag[left];
+    // Move the right pointer until the difference condition is met
+    while (right < n && bag[right].arrival_ - left_lbl.arrival_ < 1440) {
+      right++;
+    }
+
+    // All elements from 'right' to 'n-1' are valid pairs with 'left'
+    for (auto i = right; i < n; ++i) {
+      auto& right_lbl = bag[i];
+      auto shift = 1U;
+      while (left_lbl.arrival_ + shift * 1440 <= right_lbl.arrival_) {
+        auto new_arrival = left_lbl.arrival_ + shift * 1440;
+        if (new_arrival <= right_lbl.arrival_ && left_lbl.k_ <= right_lbl.k_) {
+          right_lbl.sbf_ &= ~(left_lbl.sbf_ >> shift);
+        } else {
+          break;
+        }
+        shift++;
+      }
+    }
+  }
+  const auto new_end = std::remove_if(bag.begin(), bag.end(), [&](auto const& rel_j) {return rel_j.sbf_.none();});
+  bag.erase(new_end, bag.end());
 }
 
 }  // namespace nigiri::routing::para
