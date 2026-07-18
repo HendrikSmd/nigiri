@@ -72,18 +72,19 @@ struct para_search {
     collect_destinations(tt_, q_.destination_, q_.dest_match_mode_,
                          state_.is_destination_, state_.dist_to_dest_);
 
-
-    auto lb_span = get_otel_tracer()->StartSpan("lower bounds");
-    auto lb_scope = opentelemetry::trace::Scope{lb_span};
-    UTL_START_TIMING(lb);
-    dijkstra(tt_, q_,
-             tt_.fwd_search_lb_graph_[q_.prf_idx_],
-             state_.travel_time_lower_bound_);
-    UTL_STOP_TIMING(lb);
-    stats_.lb_time_ = static_cast<std::uint64_t>(UTL_TIMING_MS(lb));
-
-    utl::verify(q_.start_.size() == 1U, "para-raptor only supports one dedicated start");
-    auto const start_cmpnt = tt_.location_component_[q_.start_.front().target()];
+    if constexpr (para_raptor::kUseLowerBounds) {
+      auto lb_span = get_otel_tracer()->StartSpan("lower bounds");
+      auto lb_scope = opentelemetry::trace::Scope{lb_span};
+      UTL_START_TIMING(lb);
+      dijkstra(tt_, q_, tt_.fwd_search_lb_graph_[q_.prf_idx_],
+               state_.travel_time_lower_bound_);
+      UTL_STOP_TIMING(lb);
+      stats_.lb_time_ = static_cast<std::uint64_t>(UTL_TIMING_MS(lb));
+    }
+    utl::verify(q_.start_.size() == 1U,
+                "para-raptor only supports one dedicated start");
+    auto const start_cmpnt =
+        tt_.location_component_[q_.start_.front().target()];
 
 
 #if defined(NIGIRI_TRACING)

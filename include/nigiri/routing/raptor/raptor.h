@@ -123,6 +123,7 @@ struct raptor {
 
   static constexpr bool kUseLowerBounds = true;
   static constexpr bool kUseSimd = true;
+  static constexpr bool kUseFootpathRanks = true;
   static constexpr auto const kFwd = (SearchDir == direction::kForward);
   static constexpr auto const kBwd = (SearchDir == direction::kBackward);
   static constexpr auto const kInvalid = kInvalidDelta<SearchDir>;
@@ -641,10 +642,12 @@ private:
 
         if (is_better(fp_target_time, best_[i][target_v]) &&
             is_better(fp_target_time, time_at_dest_[k])) {
-          if (lb_[i] == kUnreachable ||
-              !is_better(fp_target_time + dir(lb_[i]), time_at_dest_[k])) {
-            ++stats_.fp_update_prevented_by_lower_bound_;
-            return;
+          if constexpr (kUseLowerBounds) {
+            if (lb_[i] == kUnreachable ||
+                !is_better(fp_target_time + dir(lb_[i]), time_at_dest_[k])) {
+              ++stats_.fp_update_prevented_by_lower_bound_;
+              return;
+            }
           }
 
           ++stats_.n_earliest_arrival_updated_by_footpath_;
@@ -676,7 +679,7 @@ private:
 
       auto const fp_cmpnt = tt_.location_component_[l_idx];
       for (auto const [j, fp] : utl::enumerate(fps)) {
-        if constexpr (algo_version == version::kParaPlainRanks) {
+        if constexpr (algo_version == version::kParaPlainRanks && kUseFootpathRanks) {
           auto const g_cell_start = rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.first];
           auto const g_cell_dest =  rank_store_.partition_.cmpnt_to_cell_idx_[start_dest_cmpnt_.second];
           auto const fp_g_cell = rank_store_.partition_.cmpnt_to_cell_idx_[fp_cmpnt];
@@ -718,22 +721,25 @@ private:
 
           if (is_better(fp_target_time, best_[target][target_v]) &&
               is_better(fp_target_time, time_at_dest_[k])) {
-            auto const lower_bound = lb_[target];
-            if (lower_bound == kUnreachable ||
-                !is_better(fp_target_time + dir(lower_bound),
-                           time_at_dest_[k])) {
-              ++stats_.fp_update_prevented_by_lower_bound_;
-              trace_upd(
-                  "┊ ├k={} *** LB NO UPD: (from={}, tmp={}) --{}--> (to={}, "
-                  "best={}) --> update => {}, LB={}, LB_AT_DEST={}, DEST={}\n",
-                  k, loc{tt_, l_idx}, to_unix(tmp_[to_idx(l_idx)][v]),
-                  adjusted_transfer_time(transfer_time_settings_,
-                                         fp.duration()),
-                  loc{tt_, fp.target()}, best_[target][target_v],
-                  to_unix(fp_target_time), lower_bound,
-                  to_unix(clamp(fp_target_time + dir(lower_bound))),
-                  to_unix(time_at_dest_[k]));
-              continue;
+            if constexpr (kUseLowerBounds) {
+              auto const lower_bound = lb_[target];
+              if (lower_bound == kUnreachable ||
+                  !is_better(fp_target_time + dir(lower_bound),
+                             time_at_dest_[k])) {
+                ++stats_.fp_update_prevented_by_lower_bound_;
+                trace_upd(
+                    "┊ ├k={} *** LB NO UPD: (from={}, tmp={}) --{}--> (to={}, "
+                    "best={}) --> update => {}, LB={}, LB_AT_DEST={}, "
+                    "DEST={}\n",
+                    k, loc{tt_, l_idx}, to_unix(tmp_[to_idx(l_idx)][v]),
+                    adjusted_transfer_time(transfer_time_settings_,
+                                           fp.duration()),
+                    loc{tt_, fp.target()}, best_[target][target_v],
+                    to_unix(fp_target_time), lower_bound,
+                    to_unix(clamp(fp_target_time + dir(lower_bound))),
+                    to_unix(time_at_dest_[k]));
+                continue;
+              }
             }
 
             trace_upd(
@@ -816,21 +822,23 @@ private:
 
           if (is_better(fp_target_time, best_[target][target_v]) &&
               is_better(fp_target_time, time_at_dest_[k])) {
-            auto const lower_bound = lb_[target];
-            if (lower_bound == kUnreachable ||
-                !is_better(fp_target_time + dir(lower_bound),
-                           time_at_dest_[k])) {
-              ++stats_.fp_update_prevented_by_lower_bound_;
-              trace_upd(
-                  "┊ ├k={} *** LB NO TD FP UPD: (from={}, tmp={}) --{}--> "
-                  "(to={}, best={}) --> update => {}, LB={}, LB_AT_DEST={}, "
-                  "DEST={}\n",
-                  k, loc{tt_, l_idx}, to_unix(tmp_[to_idx(l_idx)][v]),
-                  fp.duration(), loc{tt_, fp.target()}, best_[target][target_v],
-                  fp_target_time, lower_bound,
-                  to_unix(clamp(fp_target_time + dir(lower_bound))),
-                  to_unix(time_at_dest_[k]));
-              return utl::cflow::kContinue;
+            if constexpr (kUseLowerBounds) {
+              auto const lower_bound = lb_[target];
+              if (lower_bound == kUnreachable ||
+                  !is_better(fp_target_time + dir(lower_bound),
+                             time_at_dest_[k])) {
+                ++stats_.fp_update_prevented_by_lower_bound_;
+                trace_upd(
+                    "┊ ├k={} *** LB NO TD FP UPD: (from={}, tmp={}) --{}--> "
+                    "(to={}, best={}) --> update => {}, LB={}, LB_AT_DEST={}, "
+                    "DEST={}\n",
+                    k, loc{tt_, l_idx}, to_unix(tmp_[to_idx(l_idx)][v]),
+                    fp.duration(), loc{tt_, fp.target()},
+                    best_[target][target_v], fp_target_time, lower_bound,
+                    to_unix(clamp(fp_target_time + dir(lower_bound))),
+                    to_unix(time_at_dest_[k]));
+                return utl::cflow::kContinue;
+              }
             }
 
             trace_upd(
@@ -1027,9 +1035,9 @@ private:
                 get_best(round_times_[k - 1][l_idx][target_v],
                          tmp_[l_idx][target_v], best_[l_idx][target_v]);
 
-            if (is_better(by_transport, time_at_dest_[k]) &&
-                lb_[l_idx] != kUnreachable &&
-                is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])) {
+            if (is_better(by_transport, time_at_dest_[k]) && (!kUseLowerBounds ||
+                (lb_[l_idx] != kUnreachable &&
+                 is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])))) {
               trace_upd(
                   "┊ │k={}    RT | name={}, dbg={}, time_by_transport={}, "
                   "BETTER THAN current_best={} => update, {} marking station "
@@ -1053,8 +1061,10 @@ private:
         }
       }
 
-      if (lb_[l_idx] == kUnreachable) {
-        break;
+      if constexpr (kUseLowerBounds) {
+        if (lb_[l_idx] == kUnreachable) {
+          break;
+        }
       }
 
       if (is_last || !(stp.can_start<SearchDir>(is_wheelchair_)) ||
@@ -1174,8 +1184,9 @@ private:
           assert(by_transport != std::numeric_limits<delta_t>::min() &&
                  by_transport != std::numeric_limits<delta_t>::max());
           if (is_better(by_transport, time_at_dest_[k]) &&
-              lb_[l_idx] != kUnreachable &&
-              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])) {
+              (!kUseLowerBounds ||
+               (lb_[l_idx] != kUnreachable &&
+                is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])))) {
             trace_upd(
                 "┊ │k={} v={}->{}    name={}, dbg={}, time_by_transport={}, "
                 "BETTER THAN current_best={} => update, {} marking station "
@@ -1239,8 +1250,10 @@ private:
         continue;
       }
 
-      if (lb_[l_idx] == kUnreachable) {
-        break;
+      if constexpr (kUseLowerBounds) {
+        if (lb_[l_idx] == kUnreachable) {
+          break;
+        }
       }
 
       if constexpr (algo_version == version::kParaPlainRanks) {
@@ -1399,8 +1412,8 @@ private:
           assert(by_transport != std::numeric_limits<delta_t>::min() &&
                  by_transport != std::numeric_limits<delta_t>::max());
           if (is_better(by_transport, time_at_dest_[k]) &&
-              lb_[l_idx] != kUnreachable &&
-              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])) {
+              (!kUseLowerBounds || (lb_[l_idx] != kUnreachable &&
+              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])))) {
             trace_upd(
                 "┊ │k={} v={}->{}    name={}, dbg={}, time_by_transport={}, "
                 "BETTER THAN current_best={} => update, {} marking station "
@@ -1465,8 +1478,10 @@ private:
         continue;
       }
 
-      if (lb_[l_idx] == kUnreachable) {
-        break;
+      if constexpr (kUseLowerBounds) {
+        if (lb_[l_idx] == kUnreachable) {
+          break;
+        }
       }
 
       if (stop_to_scan.scan_depart_ == 1) {
@@ -1605,8 +1620,8 @@ private:
           assert(by_transport != std::numeric_limits<delta_t>::min() &&
                  by_transport != std::numeric_limits<delta_t>::max());
           if (is_better(by_transport, time_at_dest_[k]) &&
-              lb_[l_idx] != kUnreachable &&
-              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])) {
+              (!kUseLowerBounds || (lb_[l_idx] != kUnreachable &&
+              is_better(by_transport + dir(lb_[l_idx]), time_at_dest_[k])))) {
             trace_upd(
                 "┊ │k={} v={}->{}    name={}, dbg={}, time_by_transport={}, "
                 "BETTER THAN current_best={} => update, {} marking station "
@@ -1671,8 +1686,10 @@ private:
         return false;
       }
 
-      if (lb_[l_idx] == kUnreachable) {
-        return true;
+      if constexpr (kUseLowerBounds) {
+        if (lb_[l_idx] == kUnreachable) {
+          return true;
+        }
       }
 
       if (scan_dep) {
@@ -1757,18 +1774,20 @@ private:
         auto const ev = *it;
         auto const ev_mam = ev.mam();
 
-        if (is_better_or_eq(time_at_dest_[k],
-                            to_delta(day, ev_mam) + dir(lb_[to_idx(l)]))) {
-          trace(
-              "┊ │k={}      => name={}, dbg={}, day={}={}, best_mam={}, "
-              "transport_mam={}, transport_time={} => TIME AT DEST {} IS "
-              "BETTER!\n",
-              k, tt_.transport_name(tt_.route_transport_ranges_[r][t_offset]),
-              tt_.dbg(tt_.route_transport_ranges_[r][t_offset]), day,
-              tt_.to_unixtime(day, 0_minutes), mam_at_stop, ev_mam,
-              tt_.to_unixtime(day, duration_t{ev_mam}),
-              to_unix(time_at_dest_[k]));
-          return {transport_idx_t::invalid(), day_idx_t::invalid()};
+        if constexpr (kUseLowerBounds) {
+          if (is_better_or_eq(time_at_dest_[k],
+                              to_delta(day, ev_mam) + dir(lb_[to_idx(l)]))) {
+            trace(
+                "┊ │k={}      => name={}, dbg={}, day={}={}, best_mam={}, "
+                "transport_mam={}, transport_time={} => TIME AT DEST {} IS "
+                "BETTER!\n",
+                k, tt_.transport_name(tt_.route_transport_ranges_[r][t_offset]),
+                tt_.dbg(tt_.route_transport_ranges_[r][t_offset]), day,
+                tt_.to_unixtime(day, 0_minutes), mam_at_stop, ev_mam,
+                tt_.to_unixtime(day, duration_t{ev_mam}),
+                to_unix(time_at_dest_[k]));
+            return {transport_idx_t::invalid(), day_idx_t::invalid()};
+          }
         }
 
         auto const t = tt_.route_transport_ranges_[r][t_offset];
