@@ -2,12 +2,14 @@
 #include <string_view>
 #include <sstream>
 #include <chrono>
+#include <fstream>
 #include <string>
 
 #include "boost/program_options.hpp"
 
 #include "nigiri/loader/load.h"
 #include "nigiri/common/clique.h"
+#include "nigiri/qa/qa.h"
 #include "nigiri/routing/pareto_set.h"
 #include "nigiri/routing/raptor/para/bmc_raptor.h"
 #include "nigiri/routing/raptor/para/customization.h"
@@ -128,7 +130,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 10> sub_commands = {
+  static constexpr std::array<sub_command, 11> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
@@ -139,7 +141,8 @@ int main(int argc, char** argv) {
       {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"},
       {"check-transport-order", "checks if the transports are ordered correctly"},
       {"export-routes", "export routes of timetable to geojson"},
-      {"convert-ranks", "converts plain route rank stores into other representations"}
+      {"convert-ranks", "converts plain route rank stores into other representations"},
+      {"convert-benchmark", "converts serialized benchmark timings to CSV"}
     }
   };
 
@@ -761,6 +764,54 @@ int main(int argc, char** argv) {
       bitvec_route_rank_store.write(out_file);
     } else {
       utl::fail("Store format unknown");
+    }
+  } else if (command == "convert-benchmark") {
+    auto in_file = fs::path{};
+    auto out_file = fs::path{};
+    auto description = std::string{};
+
+    bpo::options_description convert_benchmark_desc(
+        "convert-benchmark options");
+    convert_benchmark_desc.add_options()
+        ("in", bpo::value(&in_file)->required(),
+         "path to the serialized benchmark criteria file")
+        ("out", bpo::value(&out_file)->required(),
+         "path to the CSV output file")
+        ("description,d", bpo::value(&description)->default_value(description),
+         "optional description written as the first CSV line");
+
+    if (vm.contains("help")) {
+      std::cout << convert_benchmark_desc << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts =
+        bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(
+        bpo::command_line_parser(opts).options(convert_benchmark_desc).run(),
+        cvm);
+    bpo::notify(cvm);
+
+    auto const benchmark = nigiri::qa::benchmark_criteria::read(
+        cista::memory_holder{cista::file{in_file.c_str(), "r"}.content()});
+    auto data = std::vector<nigiri::qa::query_criteria>{
+        benchmark->qc_.begin(), benchmark->qc_.end()};
+    std::ranges::sort(data, [](auto const& lhs, auto const& rhs) {
+      return lhs.query_idx_ < rhs.query_idx_;
+    });
+
+    std::ofstream out(out_file);
+    if (!out) {
+      throw utl::fail("Could not open output file {}", out_file.string());
+    }
+    if (!description.empty()) {
+      out << "# " << description << '\n';
+    }
+    out << "query_idx,execution_time_ms\n";
+    for (auto const& point : data) {
+      out << point.query_idx_ << ',' << point.query_time_.count() << '\n';
     }
   } else if (command == "compare-bitvec") {
     auto in_plain_store = fs::path{};
