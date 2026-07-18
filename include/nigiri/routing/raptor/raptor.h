@@ -41,6 +41,7 @@ struct raptor_stats {
         {"n_route_scan_pruned_by_para", n_route_scan_pruned_by_para_},
         {"n_departure_pruned_by_para", n_departure_pruned_by_para_},
         {"n_arrival_pruned_by_para", n_arrival_pruned_by_para_},
+        {"n_stops_visited", n_stops_visited_},
     };
   }
 
@@ -64,6 +65,7 @@ struct raptor_stats {
     o.n_arrival_pruned_by_para_;
     copy.n_departure_pruned_by_para_ +=
     o.n_departure_pruned_by_para_;
+    copy.n_stops_visited_ += o.n_stops_visited_;
     return copy;
   }
 
@@ -78,6 +80,7 @@ struct raptor_stats {
   std::uint64_t n_route_scan_pruned_by_para_{0ULL};
   std::uint64_t n_arrival_pruned_by_para_{0ULL};
   std::uint64_t n_departure_pruned_by_para_{0ULL};
+  std::uint64_t n_stops_visited_{0ULL};
 };
 
 enum class search_mode { kOneToOne, kOneToAll };
@@ -1095,6 +1098,7 @@ private:
     auto v_offset = std::array<std::size_t, Vias + 1>{};
 
     for (auto i = 0U; i != stop_seq.size(); ++i) {
+      stats_.n_stops_visited_++;
       auto const stop_idx =
           static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
       auto const stp = stop{stop_seq[stop_idx]};
@@ -1330,6 +1334,7 @@ private:
       if (i >= stop_seq.size()) {
         break;
       }
+      stats_.n_stops_visited_++;
 
       auto const stop_idx =
           static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
@@ -1539,6 +1544,7 @@ private:
     auto v_offset = std::array<std::size_t, Vias + 1>{};
 
     rank_store_.template for_each_stop_to_scan<with_bmi>(r, min_lcl, [&](stop_idx_t const i, bool const scan_dep, bool const scan_arr) {
+      stats_.n_stops_visited_++;
       auto const stop_idx =
           static_cast<stop_idx_t>(kFwd ? i : stop_seq.size() - i - 1U);
       auto const stp = stop{stop_seq[stop_idx]};

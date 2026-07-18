@@ -103,7 +103,9 @@ struct benchmark_result {
         << std::setw(9)
         << br.routing_result_.algo_stats_.at("n_departure_pruned_by_para")
         << ", #arrivals-skipped-by-para: " << std::setfill(' ') << std::setw(9)
-        << br.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") << ")";
+        << br.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") << ")"
+        << ", #stops visited: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_stops_visited") << ")";
     return out;
   }
 
@@ -406,6 +408,12 @@ void print_results(
            b.routing_result_.algo_stats_.at("n_arrival_pruned_by_para");
   });
   print_result(results, "#arrivals pruned by para");
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at("n_stops_visited") <
+           b.routing_result_.algo_stats_.at("n_stops_visited");
+  });
+  print_result(results, "#stops visited");
 }
 
 void print_memory_usage() {
