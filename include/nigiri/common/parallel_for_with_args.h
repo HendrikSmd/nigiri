@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <thread>
+
 #include "utl/parallel_for.h"
 
 namespace nigiri {
@@ -8,7 +11,7 @@ template <typename ThreadLocal, typename Fun,
           typename ProgressUpdateFn = utl::noop_progress_update,
           typename... Args>
 inline utl::errors_t parallel_for_run_threadlocal(
-    size_t const job_count, Fun func,
+    size_t const job_count, size_t const num_threads, Fun func,
     ProgressUpdateFn&& progress_update = ProgressUpdateFn{},
     utl::parallel_error_strategy const err_strat =
         utl::parallel_error_strategy::QUIT_EXEC,
@@ -18,7 +21,7 @@ inline utl::errors_t parallel_for_run_threadlocal(
   std::atomic<size_t> counter(0);
   std::atomic<bool> quit{false};
   std::vector<std::thread> threads;
-  for (auto i = 0u; i < std::thread::hardware_concurrency(); ++i) {
+  for (auto i = 0u; i < num_threads; ++i) {
     threads.emplace_back([&, ...thread_local_args = std::forward<Args>(args)]() {
       auto threadlocal = ThreadLocal{thread_local_args...};
 
@@ -52,4 +55,20 @@ inline utl::errors_t parallel_for_run_threadlocal(
   return errors;
 }
 
+template <typename ThreadLocal, typename Fun,
+          typename ProgressUpdateFn = utl::noop_progress_update,
+          typename... Args>
+inline utl::errors_t parallel_for_run_threadlocal(
+    size_t const job_count, Fun func,
+    ProgressUpdateFn&& progress_update = ProgressUpdateFn{},
+    utl::parallel_error_strategy const err_strat =
+        utl::parallel_error_strategy::QUIT_EXEC,
+    Args&&... args) {
+  return parallel_for_run_threadlocal<ThreadLocal>(
+      job_count, std::max(1U, std::thread::hardware_concurrency()), std::move(func),
+      std::forward<ProgressUpdateFn>(progress_update), err_strat,
+      std::forward<Args>(args)...);
 }
+
+}
+

@@ -8,6 +8,7 @@
 #include "utl/parallel_for.h"
 #include "utl/progress_tracker.h"
 
+#include "nigiri/common/parallel_for_with_args.h"
 #include "nigiri/logging.h"
 #include "nigiri/qa/qa.h"
 #include "nigiri/query_generator/generator.h"
@@ -150,7 +151,8 @@ nigiri::pareto_set<nigiri::routing::journey> raptor_search(
 void process_queries_raptor(
     std::vector<nigiri::query_generation::start_dest_query> const& queries,
     std::vector<benchmark_result>& results,
-    nigiri::timetable const& tt) {
+    nigiri::timetable const& tt,
+    std::size_t const num_threads) {
   results.reserve(queries.size());
   std::mutex mutex;
   {
@@ -163,8 +165,8 @@ void process_queries_raptor(
       search_state ss_;
       raptor_state rs_;
     };
-    utl::parallel_for_run_threadlocal<raptor_query_state>(
-      queries.size(), [&](auto& query_state, auto const q_idx) {
+    nigiri::parallel_for_run_threadlocal<raptor_query_state>(
+      queries.size(), num_threads, [&](auto& query_state, auto const q_idx) {
       try {
         auto const total_time_start = std::chrono::steady_clock::now();
         auto const result = routing::raptor_search(
@@ -189,7 +191,8 @@ void process_queries_para_raptor(
     std::vector<benchmark_result>& results,
     nigiri::timetable const& tt,
     std::string const& para_specifier,
-    std::filesystem::path const& ranks_path) {
+    std::filesystem::path const& ranks_path,
+    std::size_t const num_threads) {
   results.reserve(queries.size());
   std::mutex mutex;
 
@@ -205,8 +208,8 @@ void process_queries_para_raptor(
     };
     auto run_benchmark =
         [&](auto const& rank_store) {
-          utl::parallel_for_run_threadlocal<raptor_query_state>(
-              queries.size(), [&](auto& query_state, auto const q_idx) {
+          nigiri::parallel_for_run_threadlocal<raptor_query_state>(
+              queries.size(), num_threads, [&](auto& query_state, auto const q_idx) {
                 try {
                   auto const total_time_start =
                       std::chrono::steady_clock::now();
@@ -420,6 +423,8 @@ int main(int argc, char* argv[]) {
   auto tt_path = std::filesystem::path{};
   auto rank_store_path = std::filesystem::path{};
   auto n_queries = std::uint32_t{100U};
+  auto const hardware_threads = std::thread::hardware_concurrency();
+  auto num_threads = std::size_t{hardware_threads == 0 ? 1U : hardware_threads};
   auto gs = query_generation::generator_settings{};
   auto interval_size = duration_t::rep{};
   auto bbox_str = std::string{};
@@ -449,6 +454,8 @@ int main(int argc, char* argv[]) {
        "omit for random seed")  //
       ("num_queries,n", bpo::value(&n_queries)->default_value(n_queries),
        "number of queries to generate/process")(
+          "threads", bpo::value(&num_threads)->default_value(num_threads),
+          "number of threads to use for parallel query processing")(
           "interval_size,i",
           bpo::value<duration_t::rep>(&interval_size)->default_value(60U, "60"),
           "the initial size of the search interval in minutes, set to 0 for "
@@ -646,9 +653,9 @@ int main(int argc, char* argv[]) {
 
   auto results = std::vector<benchmark_result>{};
   if (algorithm == "raptor") {
-    process_queries_raptor(queries, results, tt);
+    process_queries_raptor(queries, results, tt, num_threads);
   } else {
-    process_queries_para_raptor(queries, results, tt, algorithm, rank_store_path);
+    process_queries_para_raptor(queries, results, tt, algorithm, rank_store_path, num_threads);
   }
 
   print_results(queries, results, tt, gs, tt_path);

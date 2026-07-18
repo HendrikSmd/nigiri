@@ -1,6 +1,7 @@
 #include "nigiri/location_match_mode.h"
 
 #include <string_view>
+#include <utility>
 
 namespace nigiri::routing {
 
