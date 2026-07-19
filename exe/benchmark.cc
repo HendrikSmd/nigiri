@@ -21,6 +21,8 @@
 #include "nigiri/timetable.h"
 #include "nigiri/types.h"
 
+#include "oh/parser.h"
+
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
@@ -450,6 +452,7 @@ int main(int argc, char* argv[]) {
   auto min_transfer_time = duration_t::rep{};
   auto qa_path = std::filesystem::path{};
   auto algorithm = std::string{};
+  std::string geo_rank_s{};
 
   bpo::options_description desc("Allowed options");
   desc.add_options()("help,h", "produce this help message")  //
@@ -528,7 +531,12 @@ int main(int argc, char* argv[]) {
        "destination location for random queries")  //
       ("qa_path,q", bpo::value(&qa_path),
        "path to write the journey criteria to for qa")
-      ("algo", bpo::value(&algorithm), "raptor | para-raptor");
+      ("algo", bpo::value(&algorithm), "raptor | para-raptor")
+      ("geo_rank",
+          bpo::value<std::string>(&geo_rank_s),
+          "emit queries with geo-rank r, i.e., the target is the 2^r-th stop "
+          "from "
+          "the source in terms of geographical distance");
   bpo::variables_map vm;
   bpo::store(bpo::command_line_parser(argc, argv).options(desc).run(), vm);
 
@@ -653,6 +661,12 @@ int main(int argc, char* argv[]) {
   if (dest_loc_val != 0U) {
     gs.dest_match_mode_ = location_match_mode::kEquivalent;
     gs.dest_ = location_idx_t{dest_loc_val};
+  }
+  if (!geo_rank_s.empty()) {
+    int parsed_geo_rank = std::stoi(geo_rank_s);
+    utl::verify(parsed_geo_rank >= 0 && parsed_geo_rank <= static_cast<int>(std::numeric_limits<std::uint8_t>::max()), "invalid geo_rank value");
+    utl::verify(1UL << parsed_geo_rank < tt.n_locations(), "Geo rank is to big");
+    gs.geo_rank_ = static_cast<std::uint8_t>(parsed_geo_rank);
   }
   // process program options - end
 

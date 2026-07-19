@@ -25,6 +25,7 @@
 #include "nigiri/routing/raptor_search.h"
 #include "nigiri/routing/search.h"
 #include "nigiri/timetable.h"
+#include "nigiri/visualize_timetable.h"
 
 #include "date/date.h"
 
@@ -130,7 +131,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 11> sub_commands = {
+  static constexpr std::array<sub_command, 12> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
@@ -141,6 +142,7 @@ int main(int argc, char** argv) {
       {"check-fp-transitivity", "checks if the given footpaths in a timetable are transitively closes"},
       {"check-transport-order", "checks if the transports are ordered correctly"},
       {"export-routes", "export routes of timetable to geojson"},
+      {"visualize-timetable", "export station locations as SVG or TikZ"},
       {"convert-ranks", "converts plain route rank stores into other representations"},
       {"convert-benchmark", "converts serialized benchmark timings to CSV"}
     }
@@ -715,6 +717,57 @@ int main(int argc, char** argv) {
 
     std::ofstream out(out_file, std::ios::out);
     routing::para::export_routes(tt, out, store);
+  } else if (command == "visualize-timetable") {
+    auto in_tt = fs::path{};
+    auto out_file = fs::path{};
+    auto format = std::string{"svg"};
+    auto width = 1000.0;
+    auto point_radius = 0.03;
+    auto padding = 0.02;
+    auto background = true;
+    bpo::options_description visualize_desc("visualize-timetable options");
+    visualize_desc.add_options()
+        ("in_tt", bpo::value(&in_tt)->required(), "path to the timetable")
+        ("out_file", bpo::value(&out_file)->required(),
+         "output path (.svg or .tex)")
+        ("format", bpo::value(&format)->default_value(format),
+         "output format: svg or tikz")
+        ("width", bpo::value(&width)->default_value(width),
+         "output width in SVG units")
+        ("point_radius", bpo::value(&point_radius)->default_value(point_radius),
+         "station radius in geographic units")
+        ("padding", bpo::value(&padding)->default_value(padding),
+         "relative border around the station extent")
+        ("background", bpo::value(&background)->default_value(background),
+         "draw the paper-coloured background");
+
+    if (vm.contains("help")) {
+      std::cout << visualize_desc << "\n\n";
+      return 0;
+    }
+    auto opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+    bpo::store(bpo::command_line_parser(opts).options(visualize_desc).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+    if (format != "svg" && format != "tikz") {
+      throw utl::fail("Unknown visualization format {} (expected svg or tikz)",
+                      format);
+    }
+    timetable_visualization_options visualization_options{
+        .format_ = format == "tikz" ? timetable_visualization_format::kTikz
+                                     : timetable_visualization_format::kSvg,
+        .width_ = width,
+        .point_radius_ = point_radius,
+        .padding_ = padding,
+        .background_ = background};
+    std::ofstream out(out_file);
+    if (!out) {
+      throw utl::fail("Could not open output file {}", out_file.string());
+    }
+    visualize_timetable(tt, out, visualization_options);
   } else if (command == "convert-ranks") {
     auto in_store = fs::path{};
     auto in_tt = fs::path{};

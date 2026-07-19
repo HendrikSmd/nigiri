@@ -54,6 +54,22 @@ nigiri is a very memory efficient and fast public transport routing core.
   such as occupancy or CO2  will require a change of the route definition in
   order for the routing to guarantee correctness.
 
+## Timetable visualization
+
+The `nigiri-para visualize-timetable` command exports the geographic extent of
+the stations in a serialized timetable as a vector drawing:
+
+```sh
+nigiri-para visualize-timetable \
+  --in_tt timetable.bin --out_file timetable.svg --format svg
+nigiri-para visualize-timetable \
+  --in_tt timetable.bin --out_file timetable.tex --format tikz
+```
+
+SVG is directly embeddable as a vector image. The TikZ output is a standalone
+`tikzpicture` (requiring the `tikz` package) suitable for LaTeX. Use
+`--background 0` for a transparent figure.
+
 ## Stay seated
 
 Formats like GTFS and NeTEx can model stay-seated transfers. This means that

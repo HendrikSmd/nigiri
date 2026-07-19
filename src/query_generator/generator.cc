@@ -104,6 +104,24 @@ std::optional<start_dest_query> generator::random_query() {
                             return random_location(coord, s_.dest_mode_);
                           }},
           s_.dest_.value());
+    } else if (s_.geo_rank_.has_value()) {
+      const auto geo_rank_index = 1UL << *s_.geo_rank_;
+      auto geo_distance = std::unordered_map<location_idx_t, double>{};
+      geo_distance.reserve(tt_.n_locations());
+      std::vector<location_idx_t::value_t> locs(tt_.n_locations());
+      std::iota(locs.begin(), locs.end(), 0);
+      for (const auto loc : locs) {
+        geo_distance[location_idx_t{loc}] =
+            geo::distance(tt_.locations_.coordinates_[std::get<location_idx_t>(s_.start_.value())],
+                          tt_.locations_.coordinates_[location_idx_t{loc}]);
+      }
+      utl::sort(locs, [&](auto const& a, auto const& b) {
+        return geo_distance[location_idx_t{a}] < geo_distance[location_idx_t{b}];
+      });
+      dest_loc_idx = location_idx_t{locs[geo_rank_index]};
+      if (tt_.location_routes_[dest_loc_idx.value()].empty()) {
+        continue;
+      }
     } else {
       auto const dest_itv = interval<unixtime_t>{
           start_itv.value().from_, start_itv.value().from_ + 1_days};

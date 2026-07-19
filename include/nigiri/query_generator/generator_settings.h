@@ -67,6 +67,9 @@ struct generator_settings {
           << std::visit(utl::overloaded{visit_loc, visit_coord},
                         gs.dest_.value());
     }
+    if (gs.geo_rank_.has_value()) {
+      out << "\ngeo_rank: " << static_cast<int>(gs.geo_rank_.value());
+    }
     return out;
   }
 
@@ -89,6 +92,7 @@ struct generator_settings {
   routing::clasz_mask_t allowed_claszes_{routing::all_clasz_allowed()};
   routing::transfer_time_settings transfer_time_settings_{};
   unsigned n_vias_{0U};
+  std::optional<std::uint8_t> geo_rank_{};
 };
 
 }  // namespace nigiri::query_generation
