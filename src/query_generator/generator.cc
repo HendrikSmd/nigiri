@@ -112,7 +112,7 @@ std::optional<start_dest_query> generator::random_query() {
       std::iota(locs.begin(), locs.end(), 0);
       for (const auto loc : locs) {
         geo_distance[location_idx_t{loc}] =
-            geo::distance(tt_.locations_.coordinates_[std::get<location_idx_t>(s_.start_.value())],
+            geo::distance(tt_.locations_.coordinates_[start_loc_idx.value()],
                           tt_.locations_.coordinates_[location_idx_t{loc}]);
       }
       utl::sort(locs, [&](auto const& a, auto const& b) {

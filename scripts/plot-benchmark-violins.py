@@ -53,6 +53,7 @@ def main() -> None:
     axis.violinplot(data, showmeans=True, showmedians=True, showextrema=True)
     axis.set_xticks(range(1, len(labels) + 1), labels, rotation=30, ha="right")
     axis.set_ylabel("Execution time (ms)")
+    axis.set_yscale('log')
     axis.set_title("Benchmark execution-time distribution")
     axis.grid(axis="y", alpha=0.25)
     figure.tight_layout()

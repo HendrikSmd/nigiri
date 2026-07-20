@@ -131,7 +131,7 @@ std::vector<routing::para::bmc_journey> bmc_raptor_search(
 
 int main(int argc, char** argv) {
 
-  static constexpr std::array<sub_command, 12> sub_commands = {
+  static constexpr std::array<sub_command, 13> sub_commands = {
     {
       {"export-hgraph", "construct route hgraph from timetable and export it"},
       {"import-partition", "imports a partition file"},
@@ -144,7 +144,8 @@ int main(int argc, char** argv) {
       {"export-routes", "export routes of timetable to geojson"},
       {"visualize-timetable", "export station locations as SVG or TikZ"},
       {"convert-ranks", "converts plain route rank stores into other representations"},
-      {"convert-benchmark", "converts serialized benchmark timings to CSV"}
+      {"convert-benchmark", "converts serialized benchmark timings to CSV"},
+      {"distribution", "cut stop distribution"},
     }
   };
 
@@ -712,9 +713,9 @@ int main(int argc, char** argv) {
 
     auto tt = *timetable::read(in_tt);
     tt.resolve();
-
-    auto const& store = *routing::para::plain_route_rank_store::read(in_store);
-
+    std::cout << out_file << std::endl;
+    auto const store = *routing::para::plain_route_rank_store::read(in_store);
+    utl::verify(tt.n_routes() == store.partition_.route_to_cell_idx_.size(), "Not the same size");
     std::ofstream out(out_file, std::ios::out);
     routing::para::export_routes(tt, out, store);
   } else if (command == "visualize-timetable") {
@@ -925,6 +926,102 @@ int main(int argc, char** argv) {
     }
     std::cout << count << std::endl;
 
+
+  } else if (command == "distribution") {
+    auto in_store = fs::path{};
+    auto in_tt = fs::path{};
+    auto out_file = fs::path{"distribution.json"};
+    auto level = 0U;
+    bpo::options_description distribution_opts("distribution options");
+    distribution_opts.add_options()
+        ("in_tt", bpo::value(&in_tt), "path to the timetable")
+        ("in_store", bpo::value(&in_store), "path to the rank store")
+        ("out_file", bpo::value(&out_file)->default_value(out_file),
+         "path to the JSON output file")
+        ("level", bpo::value(&level), "level of the distribution");
+    if (vm.contains("help")) {
+      std::cout << distribution_opts << "\n\n";
+      return 0;
+    }
+
+    std::vector<std::string> opts = bpo::collect_unrecognized(parsed.options, bpo::include_positional);
+    opts.erase(opts.begin());
+
+    bpo::store(bpo::command_line_parser(opts).options(distribution_opts).run(), cvm);
+    bpo::notify(cvm);
+
+    auto tt = *timetable::read(in_tt);
+    tt.resolve();
+
+    auto store = *routing::para::plain_route_rank_store::read(in_store);
+
+    std::vector<std::uint32_t> importances_all_;
+    for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+      const auto imp = tt.locations_.location_importance_[loc];
+      if (imp == 0) {
+        continue;
+      }
+      importances_all_.push_back(imp);
+    }
+
+    std::vector<std::vector<cell_idx_t>> component_cells_;
+    for (auto cmpnt_idx = component_idx_t{0U};
+         cmpnt_idx < tt.component_locations_.size(); ++cmpnt_idx) {
+      std::vector<cell_idx_t> cell_idxs;
+      auto const cmpnt_locations = tt.component_locations_[cmpnt_idx];
+      for (auto const loc : cmpnt_locations) {
+        auto const routes_of_loc = tt.location_routes_[loc];
+        std::ranges::transform(routes_of_loc, std::back_inserter(cell_idxs),
+                               [&](route_idx_t const& r) {
+                                 return store.partition_.get_cell_of_route(
+                                     r, level);
+                               });
+      }
+      // we sort them to make sure that all
+      // equal cell_idxs are adjacent to each other
+      // this is needed for std::unique
+      std::ranges::sort(cell_idxs);
+      auto last = std::unique(cell_idxs.begin(), cell_idxs.end());
+      cell_idxs.erase(last, cell_idxs.end());
+      component_cells_.emplace_back(cell_idxs);
+    }
+
+    std::vector<std::uint32_t> importances_level_;
+    for (auto loc = location_idx_t{0U}; loc < tt.n_locations(); ++loc) {
+      if (component_cells_[to_idx(tt.location_component_[loc])].size() <= 1) {
+        continue;
+      }
+      const auto imp = tt.locations_.location_importance_[loc];
+      if (imp == 0) {
+        continue;
+      }
+
+      importances_level_.push_back(imp);
+    }
+
+    std::ofstream out(out_file);
+    if (!out) {
+      throw utl::fail("Could not open output file {}", out_file.string());
+    }
+
+    auto write_vector = [&out](std::string_view name,
+                               std::vector<std::uint32_t> const& values,
+                               bool const trailing_comma) {
+      out << "  \"" << name << "\": [";
+      for (auto i = 0U; i < values.size(); ++i) {
+        if (i != 0U) {
+          out << ", ";
+        }
+        out << values[i];
+      }
+      out << "]" << (trailing_comma ? "," : "") << '\n';
+    };
+
+    out << "{\n";
+    out << "  \"level\": " << level << ",\n";
+    write_vector("importances_all", importances_all_, true);
+    write_vector("importances_level", importances_level_, false);
+    out << "}\n";
 
   } else {
     std::cout << "Unrecognized command: " << command << std::endl;
