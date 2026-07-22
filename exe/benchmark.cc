@@ -107,7 +107,11 @@ struct benchmark_result {
         << ", #arrivals-skipped-by-para: " << std::setfill(' ') << std::setw(9)
         << br.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") << ")"
         << ", #stops visited: " << std::setfill(' ') << std::setw(9)
-        << br.routing_result_.algo_stats_.at("n_stops_visited") << ")";
+        << br.routing_result_.algo_stats_.at("n_stops_visited")
+        << ", #earliest arrival by route: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_earliest_arrival_updated_by_route")
+        << ", #earliest arrival by footpath: " << std::setfill(' ') << std::setw(9)
+        << br.routing_result_.algo_stats_.at("n_earliest_arrival_updated_by_footpath") << ")";
     return out;
   }
 
@@ -261,6 +265,17 @@ T quantile(std::vector<T> const& v, double q) {
   return v[static_cast<std::size_t>(v.size() * q)];
 }
 
+template <typename Func>
+double extract_and_avg(std::vector<benchmark_result> const& results, Func extract) {
+  std::vector<size_t> raw;
+  raw.resize(results.size());
+  for (auto i = 0U; i < results.size(); ++i) {
+    raw[i] = extract(results[i]);
+  }
+
+  return static_cast<double>(std::accumulate(raw.begin(), raw.end(), 0.0)) / results.size();
+}
+
 void print_result(std::vector<benchmark_result> const& var,
                   std::string const& var_name) {
   std::cout << "\n--- " << var_name << " --- (n = " << var.size() << ")"
@@ -363,59 +378,129 @@ void print_results(
            b.routing_result_.search_stats_.execute_time_;
   });
   print_result(results, "execute_time");
+  std::cout << "AVG: "
+            << extract_and_avg(results, [](benchmark_result const& br) {
+                 return std::chrono::duration_cast<std::chrono::milliseconds>(
+                            br.routing_result_.search_stats_.execute_time_)
+                     .count();
+               }) << std::endl;
 
-  utl::sort(results, [](auto const& a, auto const& b) {
-    return a.routing_result_.search_stats_.interval_extensions_ <
-           b.routing_result_.search_stats_.interval_extensions_;
-  });
-  print_result(results, "interval_extensions");
+  // utl::sort(results, [](auto const& a, auto const& b) {
+  //   return a.routing_result_.search_stats_.interval_extensions_ <
+  //          b.routing_result_.search_stats_.interval_extensions_;
+  // });
+  // print_result(results, "interval_extensions");
 
-  utl::sort(results, [](auto const& a, auto const& b) {
-    return a.routing_result_.interval_.size() <
-           b.routing_result_.interval_.size();
-  });
-  print_result(results, "interval_size");
+  // utl::sort(results, [](auto const& a, auto const& b) {
+  //   return a.routing_result_.interval_.size() <
+  //          b.routing_result_.interval_.size();
+  // });
+  // print_result(results, "interval_size");
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.journeys_.size() < b.journeys_.size();
   });
   print_result(results, "#journeys");
+  std::cout << "AVG: "
+          << extract_and_avg(results, [](benchmark_result const& br) {
+               return br.journeys_.size();
+             }) << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.routing_result_.algo_stats_.at("n_earliest_trip_calls") <
            b.routing_result_.algo_stats_.at("n_earliest_trip_calls");
   });
   print_result(results, "#earliest trip calls");
+  std::cout << "AVG: "
+        << extract_and_avg(results, [](benchmark_result const& br) {
+             return br.routing_result_.algo_stats_.at("n_earliest_trip_calls");
+           }) << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.routing_result_.algo_stats_.at("n_routes_visited") <
            b.routing_result_.algo_stats_.at("n_routes_visited");
   });
   print_result(results, "#routes visited");
+  std::cout << "AVG: "
+      << extract_and_avg(results, [](benchmark_result const& br) {
+           return br.routing_result_.algo_stats_.at("n_routes_visited");
+         }) << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
   return a.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para") <
            b.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para");
   });
   print_result(results, "#route scans pruned by para");
+  std::cout << "AVG: "
+    << extract_and_avg(results, [](benchmark_result const& br) {
+         return br.routing_result_.algo_stats_.at("n_route_scan_pruned_by_para");
+       }) << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.routing_result_.algo_stats_.at("n_departure_pruned_by_para") <
            b.routing_result_.algo_stats_.at("n_departure_pruned_by_para");
   });
   print_result(results, "#departures pruned by para");
+  std::cout << "AVG: "
+  << extract_and_avg(results, [](benchmark_result const& br) {
+       return br.routing_result_.algo_stats_.at("n_departure_pruned_by_para");
+     }) << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.routing_result_.algo_stats_.at("n_arrival_pruned_by_para") <
            b.routing_result_.algo_stats_.at("n_arrival_pruned_by_para");
   });
   print_result(results, "#arrivals pruned by para");
+  std::cout << "AVG: "
+            << extract_and_avg(results,
+                               [](benchmark_result const& br) {
+                                 return br.routing_result_.algo_stats_.at(
+                                     "n_arrival_pruned_by_para");
+                               })
+            << std::endl;
 
   utl::sort(results, [](auto const& a, auto const& b) {
     return a.routing_result_.algo_stats_.at("n_stops_visited") <
            b.routing_result_.algo_stats_.at("n_stops_visited");
   });
   print_result(results, "#stops visited");
+  std::cout << "AVG: "
+            << extract_and_avg(results,
+                               [](benchmark_result const& br) {
+                                 return br.routing_result_.algo_stats_.at(
+                                     "n_stops_visited");
+                               })
+            << std::endl;
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at(
+               "n_earliest_arrival_updated_by_route") <
+           b.routing_result_.algo_stats_.at(
+               "n_earliest_arrival_updated_by_route");
+  });
+  print_result(results, "n_earliest_arrival_updated_by_route");
+  std::cout << "AVG: "
+            << extract_and_avg(results,
+                               [](benchmark_result const& br) {
+                                 return br.routing_result_.algo_stats_.at(
+                                     "n_earliest_arrival_updated_by_route");
+                               })
+            << std::endl;
+
+  utl::sort(results, [](auto const& a, auto const& b) {
+    return a.routing_result_.algo_stats_.at(
+               "n_earliest_arrival_updated_by_footpath") <
+           b.routing_result_.algo_stats_.at(
+               "n_earliest_arrival_updated_by_footpath");
+  });
+  print_result(results, "n_earliest_arrival_updated_by_footpath");
+  std::cout << "AVG: "
+          << extract_and_avg(results,
+                             [](benchmark_result const& br) {
+                               return br.routing_result_.algo_stats_.at(
+                                   "n_earliest_arrival_updated_by_footpath");
+                             })
+          << std::endl;
 }
 
 void print_memory_usage() {
